@@ -357,7 +357,7 @@ def main() -> None:
         WeightedCircle(f"C{i:02d}", radius=1.0, weight=2.0) for i in range(10)
     ]
     small_circles = [
-        WeightedCircle(f"C{i:02d}", radius=0.3, weight=1.0)
+        WeightedCircle(f"C{i:02d}", radius=0.6, weight=1.0)
         for i in range(10, 40)
     ]
     circles = large_circles + small_circles
