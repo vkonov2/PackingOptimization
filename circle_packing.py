@@ -223,32 +223,47 @@ def visualize_solution(
     plt.close(fig)
 
 
+def _circle_color(circle: WeightedCircle) -> str:
+    return "#1f77b4" if circle.weight >= 2 else "#ff7f0e"
+
+
 def _draw_circle_inventory(
     ax: plt.Axes, circles: Sequence[WeightedCircle], used: set[str]
 ) -> None:
     ax.set_title("Инвентарь окружностей")
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, len(circles))
     ax.axis("off")
 
     if not circles:
         return
 
-    max_radius = max(circle.radius for circle in circles)
-    scale = 0.3 / max_radius if max_radius > 0 else 0.3
+    sorted_circles = sorted(circles, key=lambda c: (c.radius, c.weight), reverse=True)
+    cols = max(5, int(math.ceil(math.sqrt(len(sorted_circles)))))
+    rows = int(math.ceil(len(sorted_circles) / cols))
 
-    for idx, circle in enumerate(sorted(circles, key=lambda c: c.radius, reverse=True)):
-        y = len(circles) - idx - 0.5
-        patch = CirclePatch((0.25, y), circle.radius * scale)
-        patch.set_facecolor("#1f77b4" if circle.name in used else "#dddddd")
-        patch.set_alpha(0.8 if circle.name in used else 0.3)
-        patch.set_edgecolor("#444444")
+    ax.set_xlim(0, cols)
+    ax.set_ylim(0, rows)
+    ax.set_aspect("equal")
+
+    max_radius = max(circle.radius for circle in sorted_circles)
+    radius_scale = 0.45 / max_radius if max_radius > 0 else 0.45
+
+    for idx, circle in enumerate(sorted_circles):
+        row = idx // cols
+        col = idx % cols
+        cx = col + 0.5
+        cy = rows - row - 0.5
+        patch = CirclePatch((cx, cy), circle.radius * radius_scale)
+        patch.set_facecolor(_circle_color(circle))
+        patch.set_alpha(0.85 if circle.name in used else 0.25)
+        patch.set_edgecolor("#333333")
         ax.add_patch(patch)
         ax.text(
-            0.55,
-            y,
-            f"{circle.name}: r={circle.radius}, w={circle.weight}",
-            va="center",
+            cx,
+            cy - 0.55,
+            f"{circle.name}\n r={circle.radius}, w={circle.weight}",
+            ha="center",
+            va="top",
+            fontsize=8,
         )
 
 
@@ -271,9 +286,9 @@ def _draw_circle_layout(
     for name, (cx, cy) in centers.items():
         circle = circle_lookup[name]
         patch = CirclePatch((cx, cy), circle.radius)
-        patch.set_facecolor("#ff7f0e")
+        patch.set_facecolor(_circle_color(circle))
         patch.set_alpha(0.6)
-        patch.set_edgecolor("#d62728")
+        patch.set_edgecolor("#444444")
         ax.add_patch(patch)
         ax.text(
             cx,
@@ -331,10 +346,14 @@ def report_overlap_statistics(
 
 def main() -> None:
     container = (10.0, 6.0)
-    circles = [
-        WeightedCircle(f"C{i:02d}", radius=0.8 if i < 10 else 0.5, weight=1.0)
-        for i in range(20)
+    large_circles = [
+        WeightedCircle(f"C{i:02d}", radius=1.0, weight=2.0) for i in range(10)
     ]
+    small_circles = [
+        WeightedCircle(f"C{i:02d}", radius=0.6, weight=1.0)
+        for i in range(10, 30)
+    ]
+    circles = large_circles + small_circles
 
     model = CirclePackingModel(
         container_size=container,
