@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass
+from itertools import combinations
 from typing import Dict, List, Set, Tuple
 
 import matplotlib.pyplot as plt
@@ -86,40 +87,34 @@ class WeightedPackingModel:
                 # No feasible placement, force rectangle to be unused.
                 self.model.Add(self.use_rect[idx] == 0)
 
-    def _round_up_to_grid(self, raw_depth: float) -> int:
-        """Return the smallest grid-aligned depth not below the requested amount."""
-
-        if raw_depth <= 0:
-            return 0
-        cells = math.ceil(raw_depth / self.grid_step - 1e-9)
-        return cells * self.grid_step
-
-    def _allowed_axis_overlap(self, i: int, j: int, axis: str) -> int:
-        """Maximum overlap depth along the chosen axis for the pair."""
+    def _max_overlap_depth(self, rect: SmallRectangle, axis: str) -> float:
+        """Return the largest admissible overlap along ``axis`` for ``rect``."""
 
         if axis == "x":
-            dims = (self.rectangles[i].width, self.rectangles[j].width)
-        elif axis == "y":
-            dims = (self.rectangles[i].height, self.rectangles[j].height)
-        else:
-            raise ValueError("axis must be 'x' or 'y'")
-
-        allowances = [
-            min(dim, self._round_up_to_grid(self.max_overlap_fraction * dim))
-            for dim in dims
-        ]
-        return min(allowances)
+            # Intrusion occurs through the vertical side whose depth is limited by
+            # a fraction of the perpendicular (horizontal) dimension.
+            return self.max_overlap_fraction * rect.height
+        if axis == "y":
+            # Intrusion occurs through the horizontal side, so the depth cap is a
+            # fraction of the perpendicular (vertical) dimension.
+            return self.max_overlap_fraction * rect.width
+        raise ValueError("axis must be 'x' or 'y'")
 
     def _add_overlap_constraints(self) -> None:
         for i in range(len(self.rectangles)):
             for j in range(i + 1, len(self.rectangles)):
-                allowed_x = self._allowed_axis_overlap(i, j, "x")
-                allowed_y = self._allowed_axis_overlap(i, j, "y")
+                rect_i = self.rectangles[i]
+                rect_j = self.rectangles[j]
+                allowed_x = min(
+                    self._max_overlap_depth(rect_i, "x"),
+                    self._max_overlap_depth(rect_j, "x"),
+                )
+                allowed_y = min(
+                    self._max_overlap_depth(rect_i, "y"),
+                    self._max_overlap_depth(rect_j, "y"),
+                )
                 for p_idx, placement_i in enumerate(self.placements_by_rect[i]):
                     for q_idx, placement_j in enumerate(self.placements_by_rect[j]):
-                        rect_i = self.rectangles[i]
-                        rect_j = self.rectangles[j]
-
                         if placement_i.x + rect_i.width <= placement_j.x:
                             continue
                         if placement_j.x + rect_j.width <= placement_i.x:
@@ -144,7 +139,7 @@ class WeightedPackingModel:
                             disallowed = True
                         elif allowed_y <= 0 and y_overlap > 0:
                             disallowed = True
-                        elif x_overlap > allowed_x or y_overlap > allowed_y:
+                        elif x_overlap - allowed_x > 1e-9 or y_overlap - allowed_y > 1e-9:
                             disallowed = True
 
                         if disallowed:
@@ -201,6 +196,56 @@ def visualize_solution(
     plt.tight_layout()
     plt.savefig(output_path, dpi=200)
     plt.close(fig)
+
+
+def report_overlap_statistics(
+    rectangles: List[SmallRectangle],
+    positions: Dict[str, Tuple[int, int]],
+    max_fraction: float,
+) -> None:
+    name_to_rect = {rect.name: rect for rect in rectangles}
+    used = [name for name in positions]
+    print("Контроль ограничений на перекрытие (порог = {:.0%}):".format(max_fraction))
+    any_overlap = False
+    violation_found = False
+
+    for name_i, name_j in combinations(sorted(used), 2):
+        rect_i = name_to_rect[name_i]
+        rect_j = name_to_rect[name_j]
+        x_i, y_i = positions[name_i]
+        x_j, y_j = positions[name_j]
+
+        x_overlap = max(0, min(x_i + rect_i.width, x_j + rect_j.width) - max(x_i, x_j))
+        y_overlap = max(0, min(y_i + rect_i.height, y_j + rect_j.height) - max(y_i, y_j))
+
+        if x_overlap <= 0 or y_overlap <= 0:
+            continue
+
+        any_overlap = True
+        frac_x_i = x_overlap / rect_i.height
+        frac_x_j = x_overlap / rect_j.height
+        frac_y_i = y_overlap / rect_i.width
+        frac_y_j = y_overlap / rect_j.width
+
+        violates = (
+            frac_x_i - max_fraction > 1e-9
+            or frac_x_j - max_fraction > 1e-9
+            or frac_y_i - max_fraction > 1e-9
+            or frac_y_j - max_fraction > 1e-9
+        )
+        violation_found = violation_found or violates
+
+        print(
+            f"  {name_i} ↔ {name_j}: x={x_overlap}, y={y_overlap}, "
+            f"x-фракции=({frac_x_i:.1%}, {frac_x_j:.1%}), "
+            f"y-фракции=({frac_y_i:.1%}, {frac_y_j:.1%})"
+            + ("  ← нарушение" if violates else "")
+        )
+
+    if not any_overlap:
+        print("  Перекрытия отсутствуют.")
+    elif not violation_found:
+        print("  Все перекрытия удовлетворяют ограничению.")
 
 
 def _draw_inventory_panel(
@@ -343,6 +388,8 @@ def main() -> None:
         x, y = positions[rect.name]
         print(f"  {rect.name}: левый нижний угол в ({x}, {y})")
     print(f"Суммарный вес: {total_weight:.1f}")
+
+    report_overlap_statistics(rectangles, positions, model.max_overlap_fraction)
 
     visualize_solution(container_size, rectangles, positions)
     print("Визуализация сохранена в solution.png")
