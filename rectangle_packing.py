@@ -287,7 +287,7 @@ def visualize_solution(
     container_size: Tuple[int, int],
     rectangles: List[SmallRectangle],
     positions: Dict[str, Tuple[float, float]],
-    output_path: str = "solution.png",
+    output_path: str = "rectangular_solution.png",
 ) -> None:
     used_rectangles = {name for name in positions}
     fig, (ax_inventory, ax_layout) = plt.subplots(
@@ -508,7 +508,7 @@ def main() -> None:
     report_overlap_statistics(rectangles, positions, model.max_overlap_fraction)
 
     visualize_solution(container_size, rectangles, positions)
-    print("Визуализация сохранена в solution.png")
+    print("Визуализация сохранена в rectangular_solution.png")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-rectangle-packing-demo = "rectangle_packing_demo:main"
+rectangle-packing = "rectangle_packing:main"
 
 [tool.setuptools]
-py-modules = ["rectangle_packing_demo"]
+py-modules = ["rectangle_packing"]
