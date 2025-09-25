@@ -47,7 +47,7 @@ class CirclePackingModel:
         self,
         container_size: Tuple[float, float],
         circles: Sequence[WeightedCircle],
-        grid_step: float = 1.5,
+        grid_step: float = 1.0,
         max_overlap_fraction: float = 0.1,
         coordinate_scale: int = 10,
     ) -> None:
@@ -237,40 +237,40 @@ def _draw_circle_inventory(
         return
 
     sorted_circles = sorted(circles, key=lambda c: (c.radius, c.weight), reverse=True)
-    cols = max(5, int(math.ceil(math.sqrt(len(sorted_circles)))))
+    cols = max(5, int(math.ceil(len(sorted_circles) / 4)))
     rows = int(math.ceil(len(sorted_circles) / cols))
 
-    cell_width = 3.4
-    cell_height = 1.8
+    cell_width = 2.8
+    cell_height = 2.6
 
-    ax.set_xlim(0, cols * cell_width + 1.0)
-    ax.set_ylim(0, rows * cell_height)
+    ax.set_xlim(0, cols * cell_width)
+    ax.set_ylim(-0.6, rows * cell_height + 0.6)
     ax.set_aspect("equal")
 
     max_radius = max(circle.radius for circle in sorted_circles)
     if max_radius <= 0:
         return
 
-    radius_scale = 0.7 * (cell_height / 2) / max_radius
+    radius_scale = 0.38 * min(cell_width, cell_height) / max_radius
 
     for idx, circle in enumerate(sorted_circles):
         row = idx // cols
         col = idx % cols
-        cy = rows * cell_height - (row + 0.5) * cell_height
+        cy = rows * cell_height - (row + 0.6) * cell_height
         circle_radius = circle.radius * radius_scale
-        cx = col * cell_width + circle_radius + 0.3
+        cx = col * cell_width + cell_width / 2
         patch = CirclePatch((cx, cy), circle_radius)
         patch.set_facecolor(_circle_color(circle))
         patch.set_alpha(0.85 if circle.name in used else 0.25)
         patch.set_edgecolor("#333333")
         ax.add_patch(patch)
         ax.text(
-            cx + circle_radius + 0.25,
-            cy,
-            f"{circle.name}\n r={circle.radius}, w={circle.weight}",
-            ha="left",
-            va="center",
-            fontsize=8,
+            cx,
+            cy - circle_radius - 0.25,
+            circle.name,
+            ha="center",
+            va="top",
+            fontsize=9,
         )
 
 
@@ -354,18 +354,17 @@ def report_overlap_statistics(
 def main() -> None:
     container = (10.0, 6.0)
     large_circles = [
-        WeightedCircle(f"C{i:02d}", radius=1.0, weight=2.0) for i in range(15)
+        WeightedCircle(f"C{i:02d}", radius=1.0, weight=2.0) for i in range(10)
     ]
     small_circles = [
-        WeightedCircle(f"C{i:02d}", radius=0.6, weight=1.0)
-        for i in range(15, 45)
+        WeightedCircle(f"C{i:02d}", radius=0.3, weight=1.0)
+        for i in range(10, 40)
     ]
     circles = large_circles + small_circles
 
     model = CirclePackingModel(
         container_size=container,
         circles=circles,
-        grid_step=1.5,
         max_overlap_fraction=0.1,
         coordinate_scale=20,
     )
