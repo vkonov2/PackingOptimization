@@ -322,25 +322,28 @@ def report_overlap_statistics(
             continue
 
         any_overlap = True
-        frac_x_i = x_overlap / rect_i.height
-        frac_x_j = x_overlap / rect_j.height
-        frac_y_i = y_overlap / rect_i.width
-        frac_y_j = y_overlap / rect_j.width
+        allowed_x = max_fraction * min(rect_i.height, rect_j.height)
+        allowed_y = max_fraction * min(rect_i.width, rect_j.width)
 
-        x_exceeds = (
-            frac_x_i - max_fraction > 1e-9 or frac_x_j - max_fraction > 1e-9
-        )
-        y_exceeds = (
-            frac_y_i - max_fraction > 1e-9 or frac_y_j - max_fraction > 1e-9
-        )
+        x_exceeds = x_overlap - allowed_x > 1e-9
+        y_exceeds = y_overlap - allowed_y > 1e-9
         violates = x_exceeds and y_exceeds
         violation_found = violation_found or violates
 
+        note = ""
+        if violates:
+            note = "  ← нарушение"
+        elif x_exceeds or y_exceeds:
+            exceeded_axes = []
+            if x_exceeds:
+                exceeded_axes.append("x")
+            if y_exceeds:
+                exceeded_axes.append("y")
+            note = "  (превышение только по {})".format(", ".join(exceeded_axes))
+
         print(
-            f"  {name_i} ↔ {name_j}: x={x_overlap:.2f}, y={y_overlap:.2f}, "
-            f"x-фракции=({frac_x_i:.1%}, {frac_x_j:.1%}), "
-            f"y-фракции=({frac_y_i:.1%}, {frac_y_j:.1%})"
-            + ("  ← нарушение" if violates else "")
+            f"  {name_i} ↔ {name_j}: x={x_overlap:.2f} (лимит {allowed_x:.2f}), "
+            f"y={y_overlap:.2f} (лимит {allowed_y:.2f})" + note
         )
 
     if not any_overlap:
