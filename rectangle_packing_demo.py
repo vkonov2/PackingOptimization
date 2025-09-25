@@ -32,7 +32,7 @@ class WeightedPackingModel:
         container_size: Tuple[int, int],
         rectangles: List[SmallRectangle],
         grid_step: int = 1,
-        max_overlap_fraction: float = 0.2,
+        max_overlap_fraction: float = 0.1,
     ) -> None:
         if grid_step <= 0:
             raise ValueError("grid_step must be positive")
@@ -303,7 +303,7 @@ def main() -> None:
         container_size=container_size,
         rectangles=rectangles,
         grid_step=2,
-        max_overlap_fraction=0.25,
+        max_overlap_fraction=0.10,
     )
     total_weight, positions = model.solve()
 
