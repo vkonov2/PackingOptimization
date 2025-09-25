@@ -86,53 +86,60 @@ class WeightedPackingModel:
                 # No feasible placement, force rectangle to be unused.
                 self.model.Add(self.use_rect[idx] == 0)
 
-    def _allowed_overlap_area(self, i: int, j: int) -> int:
-        """Return the maximum overlap area (in grid cells) allowed for the pair."""
+    def _allowed_axis_overlap(self, i: int, j: int, axis: str) -> int:
+        """Maximum overlap depth along the chosen axis for the pair."""
 
-        min_area = min(self.rectangles[i].area, self.rectangles[j].area)
-        allowed_fractional_area = self.max_overlap_fraction * min_area
-        if allowed_fractional_area <= 0:
-            return 0
+        if axis == "x":
+            dims = (self.rectangles[i].width, self.rectangles[j].width)
+        elif axis == "y":
+            dims = (self.rectangles[i].height, self.rectangles[j].height)
+        else:
+            raise ValueError("axis must be 'x' or 'y'")
 
-        # Coordinates are integral, so the actual overlap region is measured in
-        # whole grid cells. To honour the requested fraction while still
-        # permitting some stacking, round the permitted area up to the nearest
-        # cell instead of truncating toward zero. This keeps the constraint
-        # feasible even when the theoretical allowance is below a single cell.
-        return max(1, math.ceil(allowed_fractional_area - 1e-9))
-
-    @staticmethod
-    def _overlap_area(
-        p1: Placement,
-        rect1: SmallRectangle,
-        p2: Placement,
-        rect2: SmallRectangle,
-    ) -> int:
-        x_overlap = max(
-            0,
-            min(p1.x + rect1.width, p2.x + rect2.width)
-            - max(p1.x, p2.x),
-        )
-        y_overlap = max(
-            0,
-            min(p1.y + rect1.height, p2.y + rect2.height)
-            - max(p1.y, p2.y),
-        )
-        return x_overlap * y_overlap
+        allowances = [
+            math.floor(self.max_overlap_fraction * dim + 1e-9)
+            for dim in dims
+        ]
+        return min(allowances)
 
     def _add_overlap_constraints(self) -> None:
         for i in range(len(self.rectangles)):
             for j in range(i + 1, len(self.rectangles)):
-                allowed_area = self._allowed_overlap_area(i, j)
+                allowed_x = self._allowed_axis_overlap(i, j, "x")
+                allowed_y = self._allowed_axis_overlap(i, j, "y")
                 for p_idx, placement_i in enumerate(self.placements_by_rect[i]):
                     for q_idx, placement_j in enumerate(self.placements_by_rect[j]):
-                        overlap = self._overlap_area(
-                            placement_i,
-                            self.rectangles[i],
-                            placement_j,
-                            self.rectangles[j],
+                        rect_i = self.rectangles[i]
+                        rect_j = self.rectangles[j]
+
+                        if placement_i.x + rect_i.width <= placement_j.x:
+                            continue
+                        if placement_j.x + rect_j.width <= placement_i.x:
+                            continue
+                        if placement_i.y + rect_i.height <= placement_j.y:
+                            continue
+                        if placement_j.y + rect_j.height <= placement_i.y:
+                            continue
+                        x_overlap = max(
+                            0,
+                            min(placement_i.x + rect_i.width, placement_j.x + rect_j.width)
+                            - max(placement_i.x, placement_j.x),
                         )
-                        if overlap > allowed_area:
+                        y_overlap = max(
+                            0,
+                            min(placement_i.y + rect_i.height, placement_j.y + rect_j.height)
+                            - max(placement_i.y, placement_j.y),
+                        )
+
+                        disallowed = False
+                        if allowed_x <= 0 and x_overlap > 0:
+                            disallowed = True
+                        elif allowed_y <= 0 and y_overlap > 0:
+                            disallowed = True
+                        elif x_overlap > allowed_x or y_overlap > allowed_y:
+                            disallowed = True
+
+                        if disallowed:
                             self.model.Add(
                                 self.x[(i, p_idx)] + self.x[(j, q_idx)] <= 1
                             )
@@ -290,7 +297,7 @@ def _draw_layout_panel(
 def main() -> None:
     # The container is intentionally smaller in area than the total supply of
     # small rectangles so that the optimizer must choose a profitable subset.
-    container_size = (12, 8)
+    container_size = (10, 7)
 
     rectangles: List[SmallRectangle] = []
     for idx in range(10):
