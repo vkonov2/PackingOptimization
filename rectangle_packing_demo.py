@@ -86,9 +86,20 @@ class WeightedPackingModel:
                 # No feasible placement, force rectangle to be unused.
                 self.model.Add(self.use_rect[idx] == 0)
 
-    def _allowed_overlap_area(self, i: int, j: int) -> float:
+    def _allowed_overlap_area(self, i: int, j: int) -> int:
+        """Return the maximum overlap area (in grid cells) allowed for the pair."""
+
         min_area = min(self.rectangles[i].area, self.rectangles[j].area)
-        return self.max_overlap_fraction * min_area
+        allowed_fractional_area = self.max_overlap_fraction * min_area
+        if allowed_fractional_area <= 0:
+            return 0
+
+        # Coordinates are integral, so the actual overlap region is measured in
+        # whole grid cells. To honour the requested fraction while still
+        # permitting some stacking, round the permitted area up to the nearest
+        # cell instead of truncating toward zero. This keeps the constraint
+        # feasible even when the theoretical allowance is below a single cell.
+        return max(1, math.ceil(allowed_fractional_area - 1e-9))
 
     @staticmethod
     def _overlap_area(
@@ -121,7 +132,7 @@ class WeightedPackingModel:
                             placement_j,
                             self.rectangles[j],
                         )
-                        if overlap > allowed_area + 1e-9:
+                        if overlap > allowed_area:
                             self.model.Add(
                                 self.x[(i, p_idx)] + self.x[(j, q_idx)] <= 1
                             )
@@ -304,7 +315,7 @@ def main() -> None:
     model = WeightedPackingModel(
         container_size=container_size,
         rectangles=rectangles,
-        grid_step=2,
+        grid_step=1,
         max_overlap_fraction=0.10,
     )
     total_weight, positions = model.solve()

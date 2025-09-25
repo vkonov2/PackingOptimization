@@ -24,4 +24,7 @@ rectangle-packing-demo
 ```
 
 The solver will print the selected rectangles, their positions, and store a
-plot of the layout in `solution.png`.
+plot of the layout in `solution.png`. Coordinates are enumerated on an integer
+grid; when you allow a non-zero overlap percentage the model rounds the
+permitted area up to the nearest grid cell so that fractional allowances such
+as 10% remain achievable in the discrete setting.
