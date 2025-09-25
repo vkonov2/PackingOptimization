@@ -240,29 +240,36 @@ def _draw_circle_inventory(
     cols = max(5, int(math.ceil(math.sqrt(len(sorted_circles)))))
     rows = int(math.ceil(len(sorted_circles) / cols))
 
-    ax.set_xlim(0, cols)
-    ax.set_ylim(0, rows)
+    cell_width = 3.4
+    cell_height = 1.8
+
+    ax.set_xlim(0, cols * cell_width + 1.0)
+    ax.set_ylim(0, rows * cell_height)
     ax.set_aspect("equal")
 
     max_radius = max(circle.radius for circle in sorted_circles)
-    radius_scale = 0.45 / max_radius if max_radius > 0 else 0.45
+    if max_radius <= 0:
+        return
+
+    radius_scale = 0.7 * (cell_height / 2) / max_radius
 
     for idx, circle in enumerate(sorted_circles):
         row = idx // cols
         col = idx % cols
-        cx = col + 0.5
-        cy = rows - row - 0.5
-        patch = CirclePatch((cx, cy), circle.radius * radius_scale)
+        cy = rows * cell_height - (row + 0.5) * cell_height
+        circle_radius = circle.radius * radius_scale
+        cx = col * cell_width + circle_radius + 0.3
+        patch = CirclePatch((cx, cy), circle_radius)
         patch.set_facecolor(_circle_color(circle))
         patch.set_alpha(0.85 if circle.name in used else 0.25)
         patch.set_edgecolor("#333333")
         ax.add_patch(patch)
         ax.text(
-            cx,
-            cy - 0.55,
+            cx + circle_radius + 0.25,
+            cy,
             f"{circle.name}\n r={circle.radius}, w={circle.weight}",
-            ha="center",
-            va="top",
+            ha="left",
+            va="center",
             fontsize=8,
         )
 
@@ -347,11 +354,11 @@ def report_overlap_statistics(
 def main() -> None:
     container = (10.0, 6.0)
     large_circles = [
-        WeightedCircle(f"C{i:02d}", radius=1.0, weight=2.0) for i in range(10)
+        WeightedCircle(f"C{i:02d}", radius=1.0, weight=2.0) for i in range(15)
     ]
     small_circles = [
         WeightedCircle(f"C{i:02d}", radius=0.6, weight=1.0)
-        for i in range(10, 30)
+        for i in range(15, 45)
     ]
     circles = large_circles + small_circles
 
