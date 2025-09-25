@@ -277,7 +277,9 @@ def _draw_layout_panel(
 
 
 def main() -> None:
-    container_size = (16, 12)
+    # The container is intentionally smaller in area than the total supply of
+    # small rectangles so that the optimizer must choose a profitable subset.
+    container_size = (12, 8)
 
     rectangles: List[SmallRectangle] = []
     for idx in range(10):
