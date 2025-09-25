@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Tuple
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
@@ -57,12 +57,22 @@ class WeightedPackingModel:
 
         for idx, rect in enumerate(self.rectangles):
             placements: List[Placement] = []
-            for x in range(0, self.container_width - rect.width + 1, self.grid_step):
-                for y in range(0, self.container_height - rect.height + 1, self.grid_step):
-                    placement = Placement(idx, x, y)
-                    placements.append(placement)
-                    var = self.model.NewBoolVar(f"rect_{rect.name}_at_{x}_{y}")
-                    self.x[(idx, len(placements) - 1)] = var
+            max_x = self.container_width - rect.width
+            max_y = self.container_height - rect.height
+            if max_x >= 0 and max_y >= 0:
+                x_positions = list(range(0, max_x + 1, self.grid_step))
+                if x_positions[-1] != max_x:
+                    x_positions.append(max_x)
+                y_positions = list(range(0, max_y + 1, self.grid_step))
+                if y_positions[-1] != max_y:
+                    y_positions.append(max_y)
+
+                for x in x_positions:
+                    for y in y_positions:
+                        placement = Placement(idx, x, y)
+                        placements.append(placement)
+                        var = self.model.NewBoolVar(f"rect_{rect.name}_at_{x}_{y}")
+                        self.x[(idx, len(placements) - 1)] = var
             self.placements_by_rect.append(placements)
             use_var = self.model.NewBoolVar(f"use_{rect.name}")
             self.use_rect.append(use_var)
@@ -151,13 +161,90 @@ def visualize_solution(
     positions: Dict[str, Tuple[int, int]],
     output_path: str = "solution.png",
 ) -> None:
-    fig, ax = plt.subplots(figsize=(8, 6))
+    used_rectangles = {name for name in positions}
+    fig, (ax_inventory, ax_layout) = plt.subplots(
+        1,
+        2,
+        figsize=(14, 7),
+        gridspec_kw={"width_ratios": [1, 2]},
+    )
+
+    _draw_inventory_panel(ax_inventory, rectangles, used_rectangles)
+    _draw_layout_panel(ax_layout, container_size, rectangles, positions)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+
+def _draw_inventory_panel(
+    ax: plt.Axes, rectangles: List[SmallRectangle], used_rectangles: Set[str]
+) -> None:
+    columns = min(5, max(len(rectangles), 1))
+    spacing = 0.3
+    cell_w = 3.0
+    cell_h = 3.6
+    rows = math.ceil(len(rectangles) / columns)
+    panel_width = spacing + columns * (cell_w + spacing)
+    panel_height = spacing + rows * (cell_h + spacing)
+
+    ax.set_xlim(0, panel_width)
+    ax.set_ylim(0, panel_height)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.set_title("Инвентарь прямоугольников")
+
+    for idx, rect in enumerate(rectangles):
+        col = idx % columns
+        row = idx // columns
+        origin_x = spacing + col * (cell_w + spacing)
+        origin_y = panel_height - (row + 1) * (cell_h + spacing)
+
+        scale = min((cell_w - 0.6) / rect.width, (cell_h - 1.0) / rect.height)
+        scaled_w = rect.width * scale
+        scaled_h = rect.height * scale
+        rect_x = origin_x + (cell_w - scaled_w) / 2
+        rect_y = origin_y + (cell_h - scaled_h) / 2
+
+        is_used = rect.name in used_rectangles
+        facecolor = "#1f77b4"
+        alpha = 0.85 if is_used else 0.25
+
+        ax.add_patch(
+            Rectangle(
+                (rect_x, rect_y),
+                scaled_w,
+                scaled_h,
+                facecolor=facecolor,
+                edgecolor="black",
+                linewidth=1.0,
+                alpha=alpha,
+            )
+        )
+
+        label_y = rect_y + scaled_h / 2
+        ax.text(
+            rect_x + scaled_w / 2,
+            label_y,
+            f"{rect.name}\n{rect.width}×{rect.height}\n{rect.weight}",
+            ha="center",
+            va="center",
+            fontsize=8,
+        )
+
+
+def _draw_layout_panel(
+    ax: plt.Axes,
+    container_size: Tuple[int, int],
+    rectangles: List[SmallRectangle],
+    positions: Dict[str, Tuple[int, int]],
+) -> None:
     container_width, container_height = container_size
     ax.add_patch(
         Rectangle((0, 0), container_width, container_height, fill=False, edgecolor="black")
     )
 
-    colors = plt.get_cmap("tab10", max(len(positions), 1))
+    colors = plt.get_cmap("tab20", max(len(rectangles), 1))
 
     for idx, rect in enumerate(rectangles):
         if rect.name not in positions:
@@ -168,7 +255,7 @@ def visualize_solution(
             rect.width,
             rect.height,
             facecolor=colors(idx % colors.N),
-            alpha=0.5,
+            alpha=0.6,
             edgecolor="black",
         )
         ax.add_patch(patch)
@@ -178,43 +265,55 @@ def visualize_solution(
             f"{rect.name}\n{rect.weight}",
             ha="center",
             va="center",
+            fontsize=8,
         )
 
     ax.set_xlim(0, container_width)
     ax.set_ylim(0, container_height)
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
-    ax.set_title("Weighted packing with controlled overlap")
+    ax.set_title("Размещение внутри контейнера")
     ax.set_aspect("equal")
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=200)
-    plt.close(fig)
 
 
 def main() -> None:
-    container_size = (12, 9)
-    rectangles = [
-        SmallRectangle("A", width=5, height=4, weight=9.0),
-        SmallRectangle("B", width=4, height=3, weight=7.5),
-        SmallRectangle("C", width=6, height=2, weight=6.0),
-        SmallRectangle("D", width=3, height=3, weight=4.0),
-        SmallRectangle("E", width=2, height=5, weight=3.5),
-        SmallRectangle("F", width=4, height=4, weight=8.0),
-    ]
+    container_size = (16, 12)
+
+    rectangles: List[SmallRectangle] = []
+    for idx in range(10):
+        rectangles.append(
+            SmallRectangle(
+                name=f"L{idx + 1:02d}",
+                width=2,
+                height=3,
+                weight=6.0,
+            )
+        )
+    for idx in range(20):
+        rectangles.append(
+            SmallRectangle(
+                name=f"S{idx + 1:02d}",
+                width=1,
+                height=2,
+                weight=3.0,
+            )
+        )
 
     model = WeightedPackingModel(
         container_size=container_size,
         rectangles=rectangles,
-        grid_step=1,
+        grid_step=2,
         max_overlap_fraction=0.25,
     )
     total_weight, positions = model.solve()
 
+    used_rectangles = [rect for rect in rectangles if rect.name in positions]
+    print(f"Всего прямоугольников: {len(rectangles)}")
+    print(f"Использовано: {len(used_rectangles)}")
     print("Выбранные прямоугольники и их позиции:")
-    for rect in rectangles:
-        if rect.name in positions:
-            x, y = positions[rect.name]
-            print(f"  {rect.name}: левый нижний угол в ({x}, {y})")
+    for rect in used_rectangles:
+        x, y = positions[rect.name]
+        print(f"  {rect.name}: левый нижний угол в ({x}, {y})")
     print(f"Суммарный вес: {total_weight:.1f}")
 
     visualize_solution(container_size, rectangles, positions)
