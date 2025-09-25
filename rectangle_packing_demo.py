@@ -20,13 +20,6 @@ class SmallRectangle:
         return self.width * self.height
 
 
-@dataclass(frozen=True)
-class Placement:
-    rect_index: int
-    x: int
-    y: int
-
-
 class WeightedPackingModel:
     def __init__(
         self,
@@ -34,58 +27,88 @@ class WeightedPackingModel:
         rectangles: List[SmallRectangle],
         grid_step: int = 1,
         max_overlap_fraction: float = 0.1,
+        coordinate_scale: int = 10,
     ) -> None:
         if grid_step <= 0:
             raise ValueError("grid_step must be positive")
         if not 0 <= max_overlap_fraction <= 1:
             raise ValueError("max_overlap_fraction must be between 0 and 1")
+        if coordinate_scale <= 0:
+            raise ValueError("coordinate_scale must be positive")
 
-        self.container_width, self.container_height = container_size
+        self.scale = coordinate_scale
+        self.container_width = int(container_size[0] * self.scale)
+        self.container_height = int(container_size[1] * self.scale)
         self.rectangles = rectangles
         self.grid_step = grid_step
         self.max_overlap_fraction = max_overlap_fraction
 
+        self.scaled_dimensions: List[Tuple[int, int]] = [
+            (int(rect.width * self.scale), int(rect.height * self.scale))
+            for rect in self.rectangles
+        ]
+        self.max_scaled_width = max((w for w, _ in self.scaled_dimensions), default=0)
+        self.max_scaled_height = max((h for _, h in self.scaled_dimensions), default=0)
+
+        stride_padding = (
+            self.container_width
+            + self.container_height
+            + max(self.max_scaled_width, self.max_scaled_height)
+            + self.scale
+        )
+        self.sentinel_stride = max(stride_padding, 1)
+        self.min_coord = -self.sentinel_stride * (len(self.rectangles) + 2)
+
         self.model = cp_model.CpModel()
+        self.overlap_indicators: List[cp_model.BoolVar] = []
         self._build_variables()
-        self._add_selection_constraints()
         self._add_overlap_constraints()
         self._set_objective()
 
     def _build_variables(self) -> None:
-        self.placements_by_rect: List[List[Placement]] = []
-        self.x: Dict[Tuple[int, int], cp_model.IntVar] = {}
-        self.use_rect: List[cp_model.IntVar] = []
+        self.use_rect: List[cp_model.BoolVar] = []
+        self.x_coord: List[cp_model.IntVar] = []
+        self.y_coord: List[cp_model.IntVar] = []
+        self.can_place: List[bool] = []
+        self.sentinel_locations: List[int] = []
 
         for idx, rect in enumerate(self.rectangles):
-            placements: List[Placement] = []
-            max_x = self.container_width - rect.width
-            max_y = self.container_height - rect.height
-            if max_x >= 0 and max_y >= 0:
-                x_positions = list(range(0, max_x + 1, self.grid_step))
-                if x_positions[-1] != max_x:
-                    x_positions.append(max_x)
-                y_positions = list(range(0, max_y + 1, self.grid_step))
-                if y_positions[-1] != max_y:
-                    y_positions.append(max_y)
+            width, height = self.scaled_dimensions[idx]
+            sentinel = -self.sentinel_stride * (idx + 1)
+            self.sentinel_locations.append(sentinel)
 
-                for x in x_positions:
-                    for y in y_positions:
-                        placement = Placement(idx, x, y)
-                        placements.append(placement)
-                        var = self.model.NewBoolVar(f"rect_{rect.name}_at_{x}_{y}")
-                        self.x[(idx, len(placements) - 1)] = var
-            self.placements_by_rect.append(placements)
+            max_x = self.container_width - width
+            max_y = self.container_height - height
+            feasible = max_x >= 0 and max_y >= 0
+            self.can_place.append(feasible)
+
             use_var = self.model.NewBoolVar(f"use_{rect.name}")
-            self.use_rect.append(use_var)
+            if not feasible:
+                self.model.Add(use_var == 0)
 
-    def _add_selection_constraints(self) -> None:
-        for idx, placements in enumerate(self.placements_by_rect):
-            selection_vars = [self.x[(idx, p_idx)] for p_idx in range(len(placements))]
-            if selection_vars:
-                self.model.Add(sum(selection_vars) == self.use_rect[idx])
-            else:
-                # No feasible placement, force rectangle to be unused.
-                self.model.Add(self.use_rect[idx] == 0)
+            x_var = self.model.NewIntVar(
+                self.min_coord, self.container_width, f"x_{rect.name}"
+            )
+            y_var = self.model.NewIntVar(
+                self.min_coord, self.container_height, f"y_{rect.name}"
+            )
+
+            self.model.Add(x_var == sentinel).OnlyEnforceIf(use_var.Not())
+            self.model.Add(y_var == sentinel).OnlyEnforceIf(use_var.Not())
+
+            if feasible:
+                self.model.Add(x_var >= 0).OnlyEnforceIf(use_var)
+                self.model.Add(y_var >= 0).OnlyEnforceIf(use_var)
+                self.model.Add(x_var + width <= self.container_width).OnlyEnforceIf(
+                    use_var
+                )
+                self.model.Add(y_var + height <= self.container_height).OnlyEnforceIf(
+                    use_var
+                )
+
+            self.use_rect.append(use_var)
+            self.x_coord.append(x_var)
+            self.y_coord.append(y_var)
 
     def _max_overlap_depth(self, rect: SmallRectangle, axis: str) -> float:
         """Return the largest admissible overlap along ``axis`` for ``rect``."""
@@ -93,18 +116,33 @@ class WeightedPackingModel:
         if axis == "x":
             # Intrusion occurs through the vertical side whose depth is limited by
             # a fraction of the perpendicular (horizontal) dimension.
-            return self.max_overlap_fraction * rect.height
+            return math.floor(
+                self.max_overlap_fraction * rect.height * self.scale + 1e-9
+            )
         if axis == "y":
             # Intrusion occurs through the horizontal side, so the depth cap is a
             # fraction of the perpendicular (vertical) dimension.
-            return self.max_overlap_fraction * rect.width
+            return math.floor(
+                self.max_overlap_fraction * rect.width * self.scale + 1e-9
+            )
         raise ValueError("axis must be 'x' or 'y'")
 
     def _add_overlap_constraints(self) -> None:
+        if not self.rectangles:
+            return
+
+        max_width = self.max_scaled_width
+        max_height = self.max_scaled_height
+        min_coord = self.min_coord
+        max_x_expr = self.container_width + max_width
+        max_y_expr = self.container_height + max_height
+
         for i in range(len(self.rectangles)):
             for j in range(i + 1, len(self.rectangles)):
                 rect_i = self.rectangles[i]
                 rect_j = self.rectangles[j]
+                width_i, height_i = self.scaled_dimensions[i]
+                width_j, height_j = self.scaled_dimensions[j]
                 allowed_x = min(
                     self._max_overlap_depth(rect_i, "x"),
                     self._max_overlap_depth(rect_j, "x"),
@@ -113,48 +151,92 @@ class WeightedPackingModel:
                     self._max_overlap_depth(rect_i, "y"),
                     self._max_overlap_depth(rect_j, "y"),
                 )
-                for p_idx, placement_i in enumerate(self.placements_by_rect[i]):
-                    for q_idx, placement_j in enumerate(self.placements_by_rect[j]):
-                        if placement_i.x + rect_i.width <= placement_j.x:
-                            continue
-                        if placement_j.x + rect_j.width <= placement_i.x:
-                            continue
-                        if placement_i.y + rect_i.height <= placement_j.y:
-                            continue
-                        if placement_j.y + rect_j.height <= placement_i.y:
-                            continue
-                        x_overlap = max(
-                            0,
-                            min(placement_i.x + rect_i.width, placement_j.x + rect_j.width)
-                            - max(placement_i.x, placement_j.x),
-                        )
-                        y_overlap = max(
-                            0,
-                            min(placement_i.y + rect_i.height, placement_j.y + rect_j.height)
-                            - max(placement_i.y, placement_j.y),
-                        )
 
-                        disallowed = False
-                        if allowed_x <= 0 and x_overlap > 0:
-                            disallowed = True
-                        elif allowed_y <= 0 and y_overlap > 0:
-                            disallowed = True
-                        elif x_overlap - allowed_x > 1e-9 or y_overlap - allowed_y > 1e-9:
-                            disallowed = True
+                x_i = self.x_coord[i]
+                y_i = self.y_coord[i]
+                x_j = self.x_coord[j]
+                y_j = self.y_coord[j]
 
-                        if disallowed:
-                            self.model.Add(
-                                self.x[(i, p_idx)] + self.x[(j, q_idx)] <= 1
-                            )
+                min_end_x = self.model.NewIntVar(
+                    min_coord, max_x_expr, f"min_end_x_{i}_{j}"
+                )
+                self.model.AddMinEquality(
+                    min_end_x, [x_i + width_i, x_j + width_j]
+                )
+
+                max_start_x = self.model.NewIntVar(
+                    min_coord, self.container_width, f"max_start_x_{i}_{j}"
+                )
+                self.model.AddMaxEquality(max_start_x, [x_i, x_j])
+
+                raw_overlap_x = self.model.NewIntVar(
+                    min_coord - self.container_width,
+                    max_x_expr - min_coord,
+                    f"raw_x_overlap_{i}_{j}",
+                )
+                self.model.Add(raw_overlap_x == min_end_x - max_start_x)
+
+                x_overlap = self.model.NewIntVar(
+                    0, min(width_i, width_j), f"x_overlap_{i}_{j}"
+                )
+                self.model.AddMaxEquality(x_overlap, [0, raw_overlap_x])
+
+                min_end_y = self.model.NewIntVar(
+                    min_coord, max_y_expr, f"min_end_y_{i}_{j}"
+                )
+                self.model.AddMinEquality(
+                    min_end_y, [y_i + height_i, y_j + height_j]
+                )
+
+                max_start_y = self.model.NewIntVar(
+                    min_coord, self.container_height, f"max_start_y_{i}_{j}"
+                )
+                self.model.AddMaxEquality(max_start_y, [y_i, y_j])
+
+                raw_overlap_y = self.model.NewIntVar(
+                    min_coord - self.container_height,
+                    max_y_expr - min_coord,
+                    f"raw_y_overlap_{i}_{j}",
+                )
+                self.model.Add(raw_overlap_y == min_end_y - max_start_y)
+
+                y_overlap = self.model.NewIntVar(
+                    0, min(height_i, height_j), f"y_overlap_{i}_{j}"
+                )
+                self.model.AddMaxEquality(y_overlap, [0, raw_overlap_y])
+
+                x_overlap_pos = self.model.NewBoolVar(f"x_overlap_pos_{i}_{j}")
+                self.model.Add(x_overlap >= 1).OnlyEnforceIf(x_overlap_pos)
+                self.model.Add(x_overlap <= 0).OnlyEnforceIf(x_overlap_pos.Not())
+
+                y_overlap_pos = self.model.NewBoolVar(f"y_overlap_pos_{i}_{j}")
+                self.model.Add(y_overlap >= 1).OnlyEnforceIf(y_overlap_pos)
+                self.model.Add(y_overlap <= 0).OnlyEnforceIf(y_overlap_pos.Not())
+
+                both_overlap = self.model.NewBoolVar(f"both_overlap_{i}_{j}")
+                self.model.AddBoolAnd([x_overlap_pos, y_overlap_pos]).OnlyEnforceIf(
+                    both_overlap
+                )
+                self.model.AddImplication(both_overlap, x_overlap_pos)
+                self.model.AddImplication(both_overlap, y_overlap_pos)
+                self.model.AddBoolOr(
+                    [both_overlap, x_overlap_pos.Not(), y_overlap_pos.Not()]
+                )
+
+                self.model.Add(x_overlap <= allowed_x).OnlyEnforceIf(both_overlap)
+                self.model.Add(y_overlap <= allowed_y).OnlyEnforceIf(both_overlap)
+
+                self.overlap_indicators.append(both_overlap)
 
     def _set_objective(self) -> None:
         objective_terms = [
             int(round(rect.weight * 1000)) * self.use_rect[idx]
             for idx, rect in enumerate(self.rectangles)
         ]
-        self.model.Maximize(sum(objective_terms))
+        overlap_bonus = sum(self.overlap_indicators) if self.overlap_indicators else 0
+        self.model.Maximize(sum(objective_terms) + overlap_bonus)
 
-    def solve(self) -> Tuple[float, Dict[str, Tuple[int, int]]]:
+    def solve(self) -> Tuple[float, Dict[str, Tuple[float, float]]]:
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = 30
         solver.parameters.num_search_workers = 8
@@ -163,23 +245,21 @@ class WeightedPackingModel:
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             raise RuntimeError("No feasible solution found")
 
-        selected_positions: Dict[str, Tuple[int, int]] = {}
+        selected_positions: Dict[str, Tuple[float, float]] = {}
         total_weight = 0.0
-        for idx, placements in enumerate(self.placements_by_rect):
-            rect = self.rectangles[idx]
+        for idx, rect in enumerate(self.rectangles):
             if math.isclose(solver.Value(self.use_rect[idx]), 1.0):
                 total_weight += rect.weight
-                for p_idx, placement in enumerate(placements):
-                    if math.isclose(solver.Value(self.x[(idx, p_idx)]), 1.0):
-                        selected_positions[rect.name] = (placement.x, placement.y)
-                        break
+                x_value = solver.Value(self.x_coord[idx]) / self.scale
+                y_value = solver.Value(self.y_coord[idx]) / self.scale
+                selected_positions[rect.name] = (x_value, y_value)
         return total_weight, selected_positions
 
 
 def visualize_solution(
     container_size: Tuple[int, int],
     rectangles: List[SmallRectangle],
-    positions: Dict[str, Tuple[int, int]],
+    positions: Dict[str, Tuple[float, float]],
     output_path: str = "solution.png",
 ) -> None:
     used_rectangles = {name for name in positions}
@@ -200,7 +280,7 @@ def visualize_solution(
 
 def report_overlap_statistics(
     rectangles: List[SmallRectangle],
-    positions: Dict[str, Tuple[int, int]],
+    positions: Dict[str, Tuple[float, float]],
     max_fraction: float,
 ) -> None:
     name_to_rect = {rect.name: rect for rect in rectangles}
@@ -215,10 +295,16 @@ def report_overlap_statistics(
         x_i, y_i = positions[name_i]
         x_j, y_j = positions[name_j]
 
-        x_overlap = max(0, min(x_i + rect_i.width, x_j + rect_j.width) - max(x_i, x_j))
-        y_overlap = max(0, min(y_i + rect_i.height, y_j + rect_j.height) - max(y_i, y_j))
+        x_overlap = max(
+            0.0,
+            min(x_i + rect_i.width, x_j + rect_j.width) - max(x_i, x_j),
+        )
+        y_overlap = max(
+            0.0,
+            min(y_i + rect_i.height, y_j + rect_j.height) - max(y_i, y_j),
+        )
 
-        if x_overlap <= 0 or y_overlap <= 0:
+        if x_overlap <= 1e-9 or y_overlap <= 1e-9:
             continue
 
         any_overlap = True
@@ -236,7 +322,7 @@ def report_overlap_statistics(
         violation_found = violation_found or violates
 
         print(
-            f"  {name_i} ↔ {name_j}: x={x_overlap}, y={y_overlap}, "
+            f"  {name_i} ↔ {name_j}: x={x_overlap:.2f}, y={y_overlap:.2f}, "
             f"x-фракции=({frac_x_i:.1%}, {frac_x_j:.1%}), "
             f"y-фракции=({frac_y_i:.1%}, {frac_y_j:.1%})"
             + ("  ← нарушение" if violates else "")
@@ -308,7 +394,7 @@ def _draw_layout_panel(
     ax: plt.Axes,
     container_size: Tuple[int, int],
     rectangles: List[SmallRectangle],
-    positions: Dict[str, Tuple[int, int]],
+    positions: Dict[str, Tuple[float, float]],
 ) -> None:
     container_width, container_height = container_size
     ax.add_patch(
@@ -347,10 +433,17 @@ def _draw_layout_panel(
     ax.set_aspect("equal")
 
 
+def _format_coord(value: float) -> str:
+    rounded = round(value + 1e-9, 1)
+    if math.isclose(rounded, round(rounded)):
+        return str(int(round(rounded)))
+    return f"{rounded:.1f}"
+
+
 def main() -> None:
     # The container is intentionally smaller in area than the total supply of
     # small rectangles so that the optimizer must choose a profitable subset.
-    container_size = (10, 6)
+    container_size = (10, 5.8)
 
     rectangles: List[SmallRectangle] = []
     for idx in range(10):
@@ -386,7 +479,10 @@ def main() -> None:
     print("Выбранные прямоугольники и их позиции:")
     for rect in used_rectangles:
         x, y = positions[rect.name]
-        print(f"  {rect.name}: левый нижний угол в ({x}, {y})")
+        print(
+            f"  {rect.name}: левый нижний угол в "
+            f"({_format_coord(x)}, {_format_coord(y)})"
+        )
     print(f"Суммарный вес: {total_weight:.1f}")
 
     report_overlap_statistics(rectangles, positions, model.max_overlap_fraction)
