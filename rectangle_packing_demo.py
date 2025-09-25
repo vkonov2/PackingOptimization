@@ -223,8 +223,22 @@ class WeightedPackingModel:
                     [both_overlap, x_overlap_pos.Not(), y_overlap_pos.Not()]
                 )
 
-                self.model.Add(x_overlap <= allowed_x).OnlyEnforceIf(both_overlap)
-                self.model.Add(y_overlap <= allowed_y).OnlyEnforceIf(both_overlap)
+                x_within_cap = self.model.NewBoolVar(f"x_within_cap_{i}_{j}")
+                y_within_cap = self.model.NewBoolVar(f"y_within_cap_{i}_{j}")
+
+                self.model.Add(x_overlap <= allowed_x).OnlyEnforceIf(x_within_cap)
+                self.model.Add(x_overlap >= allowed_x + 1).OnlyEnforceIf(
+                    x_within_cap.Not()
+                )
+
+                self.model.Add(y_overlap <= allowed_y).OnlyEnforceIf(y_within_cap)
+                self.model.Add(y_overlap >= allowed_y + 1).OnlyEnforceIf(
+                    y_within_cap.Not()
+                )
+
+                self.model.AddBoolOr(
+                    [x_within_cap, y_within_cap, both_overlap.Not()]
+                )
 
                 self.overlap_indicators.append(both_overlap)
 
@@ -313,12 +327,13 @@ def report_overlap_statistics(
         frac_y_i = y_overlap / rect_i.width
         frac_y_j = y_overlap / rect_j.width
 
-        violates = (
-            frac_x_i - max_fraction > 1e-9
-            or frac_x_j - max_fraction > 1e-9
-            or frac_y_i - max_fraction > 1e-9
-            or frac_y_j - max_fraction > 1e-9
+        x_exceeds = (
+            frac_x_i - max_fraction > 1e-9 or frac_x_j - max_fraction > 1e-9
         )
+        y_exceeds = (
+            frac_y_i - max_fraction > 1e-9 or frac_y_j - max_fraction > 1e-9
+        )
+        violates = x_exceeds and y_exceeds
         violation_found = violation_found or violates
 
         print(
