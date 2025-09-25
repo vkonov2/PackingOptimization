@@ -223,22 +223,16 @@ class WeightedPackingModel:
                     [both_overlap, x_overlap_pos.Not(), y_overlap_pos.Not()]
                 )
 
-                x_within_cap = self.model.NewBoolVar(f"x_within_cap_{i}_{j}")
-                y_within_cap = self.model.NewBoolVar(f"y_within_cap_{i}_{j}")
+                if allowed_x < 0 or allowed_y < 0:
+                    raise ValueError("Overlap allowances must be non-negative")
 
-                self.model.Add(x_overlap <= allowed_x).OnlyEnforceIf(x_within_cap)
-                self.model.Add(x_overlap >= allowed_x + 1).OnlyEnforceIf(
-                    x_within_cap.Not()
-                )
-
-                self.model.Add(y_overlap <= allowed_y).OnlyEnforceIf(y_within_cap)
-                self.model.Add(y_overlap >= allowed_y + 1).OnlyEnforceIf(
-                    y_within_cap.Not()
-                )
-
-                self.model.AddBoolOr(
-                    [x_within_cap, y_within_cap, both_overlap.Not()]
-                )
+                # When both axes overlap, each penetration depth must stay within
+                # the 10% cap derived from the perpendicular dimension of both
+                # rectangles.  This preserves the intended "border" behaviour
+                # where rectangles may slide past an edge but cannot intrude too
+                # deeply into the neighbour along either axis.
+                self.model.Add(x_overlap <= allowed_x).OnlyEnforceIf(both_overlap)
+                self.model.Add(y_overlap <= allowed_y).OnlyEnforceIf(both_overlap)
 
                 self.overlap_indicators.append(both_overlap)
 
