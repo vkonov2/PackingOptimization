@@ -226,13 +226,32 @@ class WeightedPackingModel:
                 if allowed_x < 0 or allowed_y < 0:
                     raise ValueError("Overlap allowances must be non-negative")
 
-                # When both axes overlap, each penetration depth must stay within
-                # the 10% cap derived from the perpendicular dimension of both
-                # rectangles.  This preserves the intended "border" behaviour
-                # where rectangles may slide past an edge but cannot intrude too
-                # deeply into the neighbour along either axis.
-                self.model.Add(x_overlap <= allowed_x).OnlyEnforceIf(both_overlap)
-                self.model.Add(y_overlap <= allowed_y).OnlyEnforceIf(both_overlap)
+                # Each rectangle has a border of width 10% of its perpendicular
+                # dimension.  Overlaps are allowed provided at least one axis of
+                # the intersection stays within that border for both pieces.  We
+                # therefore forbid situations where the penetration depths along
+                # *both* axes exceed their allowances simultaneously.
+                x_exceeds = self.model.NewBoolVar(f"x_exceeds_{i}_{j}")
+                y_exceeds = self.model.NewBoolVar(f"y_exceeds_{i}_{j}")
+
+                self.model.Add(x_overlap >= allowed_x + 1).OnlyEnforceIf(x_exceeds)
+                self.model.Add(x_overlap <= allowed_x).OnlyEnforceIf(x_exceeds.Not())
+                self.model.AddImplication(x_exceeds, x_overlap_pos)
+                self.model.AddImplication(x_overlap_pos.Not(), x_exceeds.Not())
+
+                self.model.Add(y_overlap >= allowed_y + 1).OnlyEnforceIf(y_exceeds)
+                self.model.Add(y_overlap <= allowed_y).OnlyEnforceIf(y_exceeds.Not())
+                self.model.AddImplication(y_exceeds, y_overlap_pos)
+                self.model.AddImplication(y_overlap_pos.Not(), y_exceeds.Not())
+
+                both_exceed = self.model.NewBoolVar(f"both_exceed_{i}_{j}")
+                self.model.AddBoolAnd([x_exceeds, y_exceeds]).OnlyEnforceIf(
+                    both_exceed
+                )
+                self.model.AddImplication(both_exceed, x_exceeds)
+                self.model.AddImplication(both_exceed, y_exceeds)
+                self.model.AddBoolOr([both_exceed, x_exceeds.Not(), y_exceeds.Not()])
+                self.model.AddImplication(both_overlap, both_exceed.Not())
 
                 self.overlap_indicators.append(both_overlap)
 
@@ -319,25 +338,14 @@ def report_overlap_statistics(
         allowed_x = max_fraction * min(rect_i.height, rect_j.height)
         allowed_y = max_fraction * min(rect_i.width, rect_j.width)
 
-        x_exceeds = x_overlap - allowed_x > 1e-9
-        y_exceeds = y_overlap - allowed_y > 1e-9
-        violates = x_exceeds and y_exceeds
+        violates = (x_overlap - allowed_x > 1e-9) and (y_overlap - allowed_y > 1e-9)
         violation_found = violation_found or violates
 
-        note = ""
-        if violates:
-            note = "  ← нарушение"
-        elif x_exceeds or y_exceeds:
-            exceeded_axes = []
-            if x_exceeds:
-                exceeded_axes.append("x")
-            if y_exceeds:
-                exceeded_axes.append("y")
-            note = "  (превышение только по {})".format(", ".join(exceeded_axes))
-
+        status = "← нарушение" if violates else "допустимо"
         print(
-            f"  {name_i} ↔ {name_j}: x={x_overlap:.2f} (лимит {allowed_x:.2f}), "
-            f"y={y_overlap:.2f} (лимит {allowed_y:.2f})" + note
+            "  {} ↔ {}: перекрытие {:.2f}×{:.2f}, порог {:.2f}×{:.2f} {}".format(
+                name_i, name_j, x_overlap, y_overlap, allowed_x, allowed_y, status
+            )
         )
 
     if not any_overlap:
