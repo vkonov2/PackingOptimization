@@ -2,9 +2,9 @@
 
 This module mirrors the rectangle packing example but targets circular
 pieces.  Each circle has a weight and can either be omitted or placed inside
-an axis-aligned rectangular container.  Circles are allowed to overlap up to a
-fraction of their diameters, letting the solver trade controlled overlaps for
-higher retained weight.
+an axis-aligned rectangular container.  Circles are allowed to overlap within
+the outer ring whose thickness is a fixed fraction of each circle's radius,
+letting the solver trade controlled overlaps for higher retained weight.
 """
 
 from __future__ import annotations
@@ -131,7 +131,7 @@ class CirclePackingModel:
     def _allowable_penetration(self, idx_a: int, idx_b: int) -> int:
         radius_a = self.scaled_radii[idx_a]
         radius_b = self.scaled_radii[idx_b]
-        allowed = self.max_overlap_fraction * min(radius_a, radius_b) * 2
+        allowed = self.max_overlap_fraction * min(radius_a, radius_b)
         return int(math.floor(allowed + 1e-9))
 
     def _required_distance(self, idx_a: int, idx_b: int) -> int:
@@ -332,7 +332,7 @@ def report_overlap_statistics(
         dy = center_a[1] - center_b[1]
         distance = math.hypot(dx, dy)
 
-        allowed_intrusion = max_fraction * min(circle_a.diameter, circle_b.diameter)
+        allowed_intrusion = max_fraction * min(circle_a.radius, circle_b.radius)
         required_distance = circle_a.radius + circle_b.radius - allowed_intrusion
         required_distance = max(required_distance, 0.0)
         overlap_depth = circle_a.radius + circle_b.radius - distance
