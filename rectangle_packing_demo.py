@@ -86,6 +86,14 @@ class WeightedPackingModel:
                 # No feasible placement, force rectangle to be unused.
                 self.model.Add(self.use_rect[idx] == 0)
 
+    def _round_up_to_grid(self, raw_depth: float) -> int:
+        """Return the smallest grid-aligned depth not below the requested amount."""
+
+        if raw_depth <= 0:
+            return 0
+        cells = math.ceil(raw_depth / self.grid_step - 1e-9)
+        return cells * self.grid_step
+
     def _allowed_axis_overlap(self, i: int, j: int, axis: str) -> int:
         """Maximum overlap depth along the chosen axis for the pair."""
 
@@ -97,7 +105,7 @@ class WeightedPackingModel:
             raise ValueError("axis must be 'x' or 'y'")
 
         allowances = [
-            math.floor(self.max_overlap_fraction * dim + 1e-9)
+            min(dim, self._round_up_to_grid(self.max_overlap_fraction * dim))
             for dim in dims
         ]
         return min(allowances)
