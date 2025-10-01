@@ -338,11 +338,13 @@ def report_overlap_statistics(
 def _draw_inventory_panel(
     ax: plt.Axes, rectangles: List[SmallRectangle], used_rectangles: Set[str]
 ) -> None:
-    columns = min(5, max(len(rectangles), 1))
-    spacing = 0.3
-    cell_w = 3.0
-    cell_h = 3.6
-    rows = math.ceil(len(rectangles) / columns)
+    rectangles_sorted = sorted(rectangles, key=lambda rect: rect.name)
+
+    columns = min(5, max(len(rectangles_sorted), 1))
+    spacing = 0.6
+    cell_w = 4.2
+    cell_h = 4.6
+    rows = math.ceil(len(rectangles_sorted) / columns)
     panel_width = spacing + columns * (cell_w + spacing)
     panel_height = spacing + rows * (cell_h + spacing)
 
@@ -352,7 +354,7 @@ def _draw_inventory_panel(
     ax.axis("off")
     ax.set_title("Инвентарь прямоугольников")
 
-    for idx, rect in enumerate(rectangles):
+    for idx, rect in enumerate(rectangles_sorted):
         col = idx % columns
         row = idx // columns
         origin_x = spacing + col * (cell_w + spacing)
