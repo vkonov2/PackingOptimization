@@ -1,4 +1,5 @@
 import math
+from collections import defaultdict
 from dataclasses import dataclass
 from itertools import combinations
 from typing import Dict, List, Sequence, Set, Tuple
@@ -71,49 +72,56 @@ def generate_rectangle_inventory(
     horizontal_growth_percent: float,
     vertical_growth_percent: float,
 ) -> List[SmallRectangle]:
+    """Generate the fixed set of rectangles requested for the demo scenario.
+
+    The original growth-based generator is retained in the signature so that
+    callers do not have to change, but the contents are now defined explicitly
+    to match the specification supplied by the user.  Each tuple below encodes
+    (height, width, weight) with the first dimension interpreted as vertical
+    size.
+    """
+
     container_width, container_height = container_size
     if container_width <= 0 or container_height <= 0:
         raise ValueError("Container dimensions must be positive")
 
     container_area = container_width * container_height
-    max_dimension = max(container_width, container_height)
 
-    width_series = _build_dimension_series(base_width, horizontal_growth_percent, max_dimension)
-    height_series = _build_dimension_series(base_height, vertical_growth_percent, max_dimension)
+    inventory_spec: Sequence[Tuple[float, float, float]] = (
+        # Высота 3.0
+        (3.0, 2.0, 1.0),
+        (3.0, 3.8, 2.0),
+        (3.0, 5.6, 3.0),
+        (3.0, 7.4, 4.0),
+        (3.0, 9.2, 5.0),
+        # Высота 5.85
+        (5.85, 2.0, 2.0),
+        (5.85, 3.8, 4.0),
+        (5.85, 5.6, 6.0),
+        (5.85, 7.4, 8.0),
+        (5.85, 9.2, 10.0),
+        # Высота 2.0
+        (2.0, 3.0, 1.0),
+        (2.0, 5.85, 2.0),
+        (2.0, 8.7, 3.0),
+        # Высота 3.8
+        (3.8, 3.0, 2.0),
+        (3.8, 5.85, 4.0),
+        (3.8, 8.7, 6.0),
+        # Высота 5.6
+        (5.6, 3.0, 3.0),
+        (5.6, 5.85, 6.0),
+        (5.6, 8.7, 9.0),
+    )
 
     rectangles: List[SmallRectangle] = []
-    type_index = 1
-    eps = 1e-9
-
-    for width_value, width_step in width_series:
-        width_weight = base_weight + width_step
-        for height_value, height_step in height_series:
-            height_weight = base_weight + height_step
-            weight = width_weight + height_weight - base_weight
-
-            base_orientation_fits = (
-                width_value <= container_width + eps
-                and height_value <= container_height + eps
-            )
-            rotated_orientation_fits = (
-                height_value <= container_width + eps
-                and width_value <= container_height + eps
-            )
-
-            orientation_variants: List[Tuple[float, float, str]] = []
-            if base_orientation_fits:
-                orientation_variants.append((width_value, height_value, ""))
-            if rotated_orientation_fits and not math.isclose(width_value, height_value):
-                orientation_variants.append((height_value, width_value, "R"))
-
-            for width, height, suffix in orientation_variants:
-                area = width * height
-                if area <= 0:
-                    continue
-                count = math.floor(container_area / area) + 1
-                name_prefix = f"R{type_index:02d}{suffix}"
-                _append_rectangles(rectangles, name_prefix, count, width, height, weight)
-                type_index += 1
+    for type_index, (height, width, weight) in enumerate(inventory_spec, start=1):
+        area = width * height
+        if area <= 0:
+            continue
+        count = math.floor(container_area / area) + 1
+        name_prefix = f"R{type_index:02d}"
+        _append_rectangles(rectangles, name_prefix, count, width, height, weight)
 
     return rectangles
 
@@ -338,13 +346,28 @@ def report_overlap_statistics(
 def _draw_inventory_panel(
     ax: plt.Axes, rectangles: List[SmallRectangle], used_rectangles: Set[str]
 ) -> None:
-    rectangles_sorted = sorted(rectangles, key=lambda rect: rect.name)
+    grouped: Dict[Tuple[float, float, float], List[SmallRectangle]] = defaultdict(list)
+    for rect in rectangles:
+        key = (round(rect.width, 6), round(rect.height, 6), round(rect.weight, 6))
+        grouped[key].append(rect)
 
-    columns = min(5, max(len(rectangles_sorted), 1))
-    spacing = 0.6
-    cell_w = 4.2
-    cell_h = 4.6
-    rows = math.ceil(len(rectangles_sorted) / columns)
+    groups = []
+    for items in grouped.values():
+        sample = items[0]
+        used_count = sum(1 for rect in items if rect.name in used_rectangles)
+        groups.append((sample, len(items), used_count))
+
+    groups.sort(key=lambda entry: (entry[0].height, entry[0].width, entry[0].weight))
+
+    total_groups = len(groups)
+    columns = min(4, max(total_groups, 1)) if total_groups <= 4 else 4
+    rows = math.ceil(total_groups / columns)
+
+    spacing = 0.8
+    cell_w = 5.2
+    cell_h = 5.8
+    label_band = 1.4
+
     panel_width = spacing + columns * (cell_w + spacing)
     panel_height = spacing + rows * (cell_h + spacing)
 
@@ -354,21 +377,24 @@ def _draw_inventory_panel(
     ax.axis("off")
     ax.set_title("Инвентарь прямоугольников")
 
-    for idx, rect in enumerate(rectangles_sorted):
+    for idx, (rect, total_count, used_count) in enumerate(groups):
         col = idx % columns
         row = idx // columns
         origin_x = spacing + col * (cell_w + spacing)
         origin_y = panel_height - (row + 1) * (cell_h + spacing)
 
-        scale = min((cell_w - 0.6) / rect.width, (cell_h - 1.0) / rect.height)
+        drawable_height = cell_h - label_band - spacing / 2
+        scale = min(
+            (cell_w - 1.2) / rect.width,
+            max(drawable_height, 1e-6) / rect.height,
+        )
         scaled_w = rect.width * scale
         scaled_h = rect.height * scale
         rect_x = origin_x + (cell_w - scaled_w) / 2
-        rect_y = origin_y + (cell_h - scaled_h) / 2
+        rect_y = origin_y + label_band + (drawable_height - scaled_h) / 2
 
-        is_used = rect.name in used_rectangles
         facecolor = "#1f77b4"
-        alpha = 0.85 if is_used else 0.25
+        alpha = 0.9 if used_count else 0.35
 
         ax.add_patch(
             Rectangle(
@@ -382,18 +408,25 @@ def _draw_inventory_panel(
             )
         )
 
-        label_y = rect_y + scaled_h / 2
+        label_x = origin_x + cell_w / 2
+        label_y = origin_y + label_band / 2
+        label_lines = [
+            f"{_format_dimension(rect.height)}×{_format_dimension(rect.width)}",
+            f"w={rect.weight:.1f} • использовано {used_count}/{total_count}",
+        ]
         ax.text(
-            rect_x + scaled_w / 2,
+            label_x,
             label_y,
-            (
-                f"{rect.name}\n"
-                f"{_format_dimension(rect.width)}×{_format_dimension(rect.height)}\n"
-                f"w={rect.weight:.1f}"
-            ),
+            "\n".join(label_lines),
             ha="center",
             va="center",
             fontsize=8,
+            bbox={
+                "boxstyle": "round,pad=0.3",
+                "facecolor": "white",
+                "edgecolor": "#cccccc",
+                "alpha": 0.9,
+            },
         )
 
 
@@ -455,7 +488,7 @@ def _format_coord(value: float) -> str:
 
 
 def main() -> None:
-    container_size = (10.0, 5.8)
+    container_size = (10.0, 6.0)
 
     rectangles = generate_rectangle_inventory(
         container_size=container_size,

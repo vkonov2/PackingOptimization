@@ -28,11 +28,19 @@ plot in `rectangular_solution.png`.
 
 ## Inventory generation
 
-The demo inventory is derived from a base rectangle (2×3 with weight 1) and two
-growth percentages that control how much the dimensions expand along the axes.
-Every combination of horizontal and vertical expansions that can fit inside the
-10×5.8 container in either orientation is enumerated. For each feasible size the
-script adds enough copies so that the total area of that size exceeds the
-container area, ensuring ample supply for the optimizer. Rotated versions are
-included whenever they fit, which allows the CP-SAT model to choose between
-upright and 90° layouts for each rectangle type.
+The demo inventory now follows the fixed list of rectangles requested in the
+task specification.  The vertical dimension is listed first below; each entry is
+added with enough copies so that its total area exceeds the area of the
+10×6 container.
+
+```
+3.0×2.0  (w=1)   3.0×3.8  (w=2)   3.0×5.6  (w=3)   3.0×7.4  (w=4)   3.0×9.2  (w=5)
+5.85×2.0 (w=2)   5.85×3.8 (w=4)   5.85×5.6 (w=6)   5.85×7.4 (w=8)   5.85×9.2 (w=10)
+2.0×3.0  (w=1)   2.0×5.85 (w=2)   2.0×8.7  (w=3)
+3.8×3.0  (w=2)   3.8×5.85 (w=4)   3.8×8.7  (w=6)
+5.6×3.0  (w=3)   5.6×5.85 (w=6)   5.6×8.7  (w=9)
+```
+
+The visualization panel groups rectangles by size, highlights how many copies
+were used in the optimal solution, and leaves the unused inventory unshaded so
+the layout is easy to inspect.
