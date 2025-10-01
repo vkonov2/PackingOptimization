@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "packing-optimization-demo"
 version = "0.1.0"
-description = "Weighted rectangle and circle packing demos using OR-Tools."
+description = "Weighted rectangle packing demo using OR-Tools."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Demo User" }]
@@ -17,7 +17,6 @@ dependencies = [
 
 [project.scripts]
 rectangle-packing = "rectangle_packing:main"
-circle-packing = "circle_packing:main"
 
 [tool.setuptools]
-py-modules = ["rectangle_packing", "circle_packing"]
+py-modules = ["rectangle_packing"]

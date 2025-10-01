@@ -26,13 +26,10 @@ class WeightedPackingModel:
         container_size: Tuple[int, int],
         rectangles: List[SmallRectangle],
         grid_step: int = 1,
-        max_overlap_fraction: float = 0.1,
         coordinate_scale: int = 10,
     ) -> None:
         if grid_step <= 0:
             raise ValueError("grid_step must be positive")
-        if not 0 <= max_overlap_fraction <= 1:
-            raise ValueError("max_overlap_fraction must be between 0 and 1")
         if coordinate_scale <= 0:
             raise ValueError("coordinate_scale must be positive")
 
@@ -41,7 +38,6 @@ class WeightedPackingModel:
         self.container_height = int(container_size[1] * self.scale)
         self.rectangles = rectangles
         self.grid_step = grid_step
-        self.max_overlap_fraction = max_overlap_fraction
 
         self.scaled_dimensions: List[Tuple[int, int]] = [
             (int(rect.width * self.scale), int(rect.height * self.scale))
@@ -60,9 +56,8 @@ class WeightedPackingModel:
         self.min_coord = -self.sentinel_stride * (len(self.rectangles) + 2)
 
         self.model = cp_model.CpModel()
-        self.overlap_indicators: List[cp_model.BoolVar] = []
         self._build_variables()
-        self._add_overlap_constraints()
+        self._add_non_overlap_constraints()
         self._set_objective()
 
     def _build_variables(self) -> None:
@@ -110,158 +105,50 @@ class WeightedPackingModel:
             self.x_coord.append(x_var)
             self.y_coord.append(y_var)
 
-    def _max_overlap_depth(self, rect: SmallRectangle, axis: str) -> float:
-        """Return the largest admissible overlap along ``axis`` for ``rect``."""
-
-        if axis == "x":
-            # Intrusion occurs through the vertical side whose depth is limited by
-            # a fraction of the perpendicular (horizontal) dimension.
-            return math.floor(
-                self.max_overlap_fraction * rect.height * self.scale + 1e-9
-            )
-        if axis == "y":
-            # Intrusion occurs through the horizontal side, so the depth cap is a
-            # fraction of the perpendicular (vertical) dimension.
-            return math.floor(
-                self.max_overlap_fraction * rect.width * self.scale + 1e-9
-            )
-        raise ValueError("axis must be 'x' or 'y'")
-
-    def _add_overlap_constraints(self) -> None:
+    def _add_non_overlap_constraints(self) -> None:
         if not self.rectangles:
             return
 
-        max_width = self.max_scaled_width
-        max_height = self.max_scaled_height
-        min_coord = self.min_coord
-        max_x_expr = self.container_width + max_width
-        max_y_expr = self.container_height + max_height
-
         for i in range(len(self.rectangles)):
             for j in range(i + 1, len(self.rectangles)):
-                rect_i = self.rectangles[i]
-                rect_j = self.rectangles[j]
-                width_i, height_i = self.scaled_dimensions[i]
-                width_j, height_j = self.scaled_dimensions[j]
-                allowed_x = min(
-                    self._max_overlap_depth(rect_i, "x"),
-                    self._max_overlap_depth(rect_j, "x"),
-                )
-                allowed_y = min(
-                    self._max_overlap_depth(rect_i, "y"),
-                    self._max_overlap_depth(rect_j, "y"),
-                )
-
                 x_i = self.x_coord[i]
                 y_i = self.y_coord[i]
                 x_j = self.x_coord[j]
                 y_j = self.y_coord[j]
+                width_i, height_i = self.scaled_dimensions[i]
+                width_j, height_j = self.scaled_dimensions[j]
 
-                min_end_x = self.model.NewIntVar(
-                    min_coord, max_x_expr, f"min_end_x_{i}_{j}"
-                )
-                self.model.AddMinEquality(
-                    min_end_x, [x_i + width_i, x_j + width_j]
-                )
+                i_left_j = self.model.NewBoolVar(f"i_left_j_{i}_{j}")
+                j_left_i = self.model.NewBoolVar(f"j_left_i_{i}_{j}")
+                i_below_j = self.model.NewBoolVar(f"i_below_j_{i}_{j}")
+                j_below_i = self.model.NewBoolVar(f"j_below_i_{i}_{j}")
 
-                max_start_x = self.model.NewIntVar(
-                    min_coord, self.container_width, f"max_start_x_{i}_{j}"
-                )
-                self.model.AddMaxEquality(max_start_x, [x_i, x_j])
+                self.model.Add(x_i + width_i <= x_j).OnlyEnforceIf(i_left_j)
+                self.model.Add(x_j + width_j <= x_i).OnlyEnforceIf(j_left_i)
+                self.model.Add(y_i + height_i <= y_j).OnlyEnforceIf(i_below_j)
+                self.model.Add(y_j + height_j <= y_i).OnlyEnforceIf(j_below_i)
 
-                raw_overlap_x = self.model.NewIntVar(
-                    min_coord - self.container_width,
-                    max_x_expr - min_coord,
-                    f"raw_x_overlap_{i}_{j}",
-                )
-                self.model.Add(raw_overlap_x == min_end_x - max_start_x)
+                for indicator in (i_left_j, j_left_i, i_below_j, j_below_i):
+                    self.model.AddImplication(indicator, self.use_rect[i])
+                    self.model.AddImplication(indicator, self.use_rect[j])
 
-                x_overlap = self.model.NewIntVar(
-                    0, min(width_i, width_j), f"x_overlap_{i}_{j}"
-                )
-                self.model.AddMaxEquality(x_overlap, [0, raw_overlap_x])
-
-                min_end_y = self.model.NewIntVar(
-                    min_coord, max_y_expr, f"min_end_y_{i}_{j}"
-                )
-                self.model.AddMinEquality(
-                    min_end_y, [y_i + height_i, y_j + height_j]
-                )
-
-                max_start_y = self.model.NewIntVar(
-                    min_coord, self.container_height, f"max_start_y_{i}_{j}"
-                )
-                self.model.AddMaxEquality(max_start_y, [y_i, y_j])
-
-                raw_overlap_y = self.model.NewIntVar(
-                    min_coord - self.container_height,
-                    max_y_expr - min_coord,
-                    f"raw_y_overlap_{i}_{j}",
-                )
-                self.model.Add(raw_overlap_y == min_end_y - max_start_y)
-
-                y_overlap = self.model.NewIntVar(
-                    0, min(height_i, height_j), f"y_overlap_{i}_{j}"
-                )
-                self.model.AddMaxEquality(y_overlap, [0, raw_overlap_y])
-
-                x_overlap_pos = self.model.NewBoolVar(f"x_overlap_pos_{i}_{j}")
-                self.model.Add(x_overlap >= 1).OnlyEnforceIf(x_overlap_pos)
-                self.model.Add(x_overlap <= 0).OnlyEnforceIf(x_overlap_pos.Not())
-
-                y_overlap_pos = self.model.NewBoolVar(f"y_overlap_pos_{i}_{j}")
-                self.model.Add(y_overlap >= 1).OnlyEnforceIf(y_overlap_pos)
-                self.model.Add(y_overlap <= 0).OnlyEnforceIf(y_overlap_pos.Not())
-
-                both_overlap = self.model.NewBoolVar(f"both_overlap_{i}_{j}")
-                self.model.AddBoolAnd([x_overlap_pos, y_overlap_pos]).OnlyEnforceIf(
-                    both_overlap
-                )
-                self.model.AddImplication(both_overlap, x_overlap_pos)
-                self.model.AddImplication(both_overlap, y_overlap_pos)
                 self.model.AddBoolOr(
-                    [both_overlap, x_overlap_pos.Not(), y_overlap_pos.Not()]
+                    [
+                        self.use_rect[i].Not(),
+                        self.use_rect[j].Not(),
+                        i_left_j,
+                        j_left_i,
+                        i_below_j,
+                        j_below_i,
+                    ]
                 )
-
-                if allowed_x < 0 or allowed_y < 0:
-                    raise ValueError("Overlap allowances must be non-negative")
-
-                # Each rectangle has a border of width 10% of its perpendicular
-                # dimension.  Overlaps are allowed provided at least one axis of
-                # the intersection stays within that border for both pieces.  We
-                # therefore forbid situations where the penetration depths along
-                # *both* axes exceed their allowances simultaneously.
-                x_exceeds = self.model.NewBoolVar(f"x_exceeds_{i}_{j}")
-                y_exceeds = self.model.NewBoolVar(f"y_exceeds_{i}_{j}")
-
-                self.model.Add(x_overlap >= allowed_x + 1).OnlyEnforceIf(x_exceeds)
-                self.model.Add(x_overlap <= allowed_x).OnlyEnforceIf(x_exceeds.Not())
-                self.model.AddImplication(x_exceeds, x_overlap_pos)
-                self.model.AddImplication(x_overlap_pos.Not(), x_exceeds.Not())
-
-                self.model.Add(y_overlap >= allowed_y + 1).OnlyEnforceIf(y_exceeds)
-                self.model.Add(y_overlap <= allowed_y).OnlyEnforceIf(y_exceeds.Not())
-                self.model.AddImplication(y_exceeds, y_overlap_pos)
-                self.model.AddImplication(y_overlap_pos.Not(), y_exceeds.Not())
-
-                both_exceed = self.model.NewBoolVar(f"both_exceed_{i}_{j}")
-                self.model.AddBoolAnd([x_exceeds, y_exceeds]).OnlyEnforceIf(
-                    both_exceed
-                )
-                self.model.AddImplication(both_exceed, x_exceeds)
-                self.model.AddImplication(both_exceed, y_exceeds)
-                self.model.AddBoolOr([both_exceed, x_exceeds.Not(), y_exceeds.Not()])
-                self.model.AddImplication(both_overlap, both_exceed.Not())
-
-                self.overlap_indicators.append(both_overlap)
 
     def _set_objective(self) -> None:
         objective_terms = [
             int(round(rect.weight * 1000)) * self.use_rect[idx]
             for idx, rect in enumerate(self.rectangles)
         ]
-        overlap_bonus = sum(self.overlap_indicators) if self.overlap_indicators else 0
-        self.model.Maximize(sum(objective_terms) + overlap_bonus)
+        self.model.Maximize(sum(objective_terms))
 
     def solve(self) -> Tuple[float, Dict[str, Tuple[float, float]]]:
         solver = cp_model.CpSolver()
@@ -308,11 +195,10 @@ def visualize_solution(
 def report_overlap_statistics(
     rectangles: List[SmallRectangle],
     positions: Dict[str, Tuple[float, float]],
-    max_fraction: float,
 ) -> None:
     name_to_rect = {rect.name: rect for rect in rectangles}
     used = [name for name in positions]
-    print("Контроль ограничений на перекрытие (порог = {:.0%}):".format(max_fraction))
+    print("Проверка отсутствия перекрытий:")
     any_overlap = False
     violation_found = False
 
@@ -335,23 +221,17 @@ def report_overlap_statistics(
             continue
 
         any_overlap = True
-        allowed_x = max_fraction * min(rect_i.height, rect_j.height)
-        allowed_y = max_fraction * min(rect_i.width, rect_j.width)
-
-        violates = (x_overlap - allowed_x > 1e-9) and (y_overlap - allowed_y > 1e-9)
-        violation_found = violation_found or violates
-
-        status = "← нарушение" if violates else "допустимо"
+        violation_found = True
         print(
-            "  {} ↔ {}: перекрытие {:.2f}×{:.2f}, порог {:.2f}×{:.2f} {}".format(
-                name_i, name_j, x_overlap, y_overlap, allowed_x, allowed_y, status
+            "  {} ↔ {}: перекрытие {:.2f}×{:.2f} ← нарушение".format(
+                name_i, name_j, x_overlap, y_overlap
             )
         )
 
     if not any_overlap:
         print("  Перекрытия отсутствуют.")
-    elif not violation_found:
-        print("  Все перекрытия удовлетворяют ограничению.")
+    elif violation_found:
+        print("  Найдены перекрытия, проверьте модель размещения.")
 
 
 def _draw_inventory_panel(
@@ -489,7 +369,6 @@ def main() -> None:
         container_size=container_size,
         rectangles=rectangles,
         grid_step=1,
-        max_overlap_fraction=0.10,
     )
     total_weight, positions = model.solve()
 
@@ -505,7 +384,7 @@ def main() -> None:
         )
     print(f"Суммарный вес: {total_weight:.1f}")
 
-    report_overlap_statistics(rectangles, positions, model.max_overlap_fraction)
+    report_overlap_statistics(rectangles, positions)
 
     visualize_solution(container_size, rectangles, positions)
     print("Визуализация сохранена в rectangular_solution.png")
