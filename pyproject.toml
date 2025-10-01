@@ -13,10 +13,13 @@ dependencies = [
     "matplotlib==3.8.4",
     "numpy==1.26.4",
     "ortools==9.11.4210",
+    "pandas==2.2.2",
+    "gradio==3.50.2",
 ]
 
 [project.scripts]
 rectangle-packing = "rectangle_packing:main"
+rectangle-packing-gradio = "rectangle_packing_gradio:main"
 
 [tool.setuptools]
-py-modules = ["rectangle_packing"]
+py-modules = ["rectangle_packing", "rectangle_packing_gradio"]

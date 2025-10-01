@@ -44,3 +44,16 @@ added with enough copies so that its total area exceeds the area of the
 The visualization panel groups rectangles by size, highlights how many copies
 were used in the optimal solution, and leaves the unused inventory unshaded so
 the layout is easy to inspect.
+
+## Gradio application
+
+For an interactive setup that lets you tweak the rectangle inventory, launch the
+Gradio interface:
+
+```bash
+python rectangle_packing_gradio.py
+```
+
+A local web server will open in your browser.  Use the editable table to add or
+remove rectangle types, then press **«упаковать»** to solve the packing problem
+and display the resulting layout.
