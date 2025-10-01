@@ -15,6 +15,7 @@ dependencies = [
     "ortools==9.11.4210",
     "pandas==2.2.2",
     "gradio==3.50.2",
+    "setuptools==69.5.1",
 ]
 
 [project.scripts]

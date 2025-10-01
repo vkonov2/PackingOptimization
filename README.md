@@ -15,6 +15,9 @@ pip install -r requirements.txt
 python rectangle_packing.py
 ```
 
+The pinned dependencies include `setuptools`, which restores the legacy
+`distutils` module expected by Gradio when running on Python 3.12.
+
 The same dependencies are also declared in `pyproject.toml`, so you can install
 the project as a package instead:
 
