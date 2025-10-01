@@ -307,6 +307,20 @@ def visualize_solution(
     plt.close(fig)
 
 
+def render_inventory_preview(
+    rectangles: Sequence[SmallRectangle],
+    output_path: str,
+) -> None:
+    """Render the inventory panel alone to the provided path."""
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    _draw_inventory_panel(ax, list(rectangles), set())
+    ax.set_title("Инвентарь", fontsize=12)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+
 def report_overlap_statistics(
     rectangles: List[SmallRectangle],
     positions: Dict[str, Tuple[float, float]],

@@ -13,6 +13,7 @@ from rectangle_packing import (
     SmallRectangle,
     WeightedPackingModel,
     generate_rectangle_inventory,
+    render_inventory_preview,
     visualize_solution,
 )
 
@@ -77,6 +78,16 @@ def _expand_inventory(table: pd.DataFrame) -> List[SmallRectangle]:
     return rectangles
 
 
+def _render_inventory_snapshot(rectangles: Sequence[SmallRectangle]) -> str | None:
+    if not rectangles:
+        return None
+
+    temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    temp_file.close()
+    render_inventory_preview(rectangles, temp_file.name)
+    return temp_file.name
+
+
 def _solve_and_render(table: pd.DataFrame) -> Tuple[str, str]:
     rectangles = _expand_inventory(table)
     if not rectangles:
@@ -116,6 +127,13 @@ def _on_pack(table: Iterable[Iterable[float]]) -> Tuple[str, str]:
     return _solve_and_render(dataframe)
 
 
+def _on_inventory_change(table: Iterable[Iterable[float]]) -> gr.Update:
+    dataframe = _coerce_table(table)
+    rectangles = _expand_inventory(dataframe)
+    snapshot = _render_inventory_snapshot(rectangles)
+    return gr.update(value=snapshot)
+
+
 def build_demo() -> gr.Blocks:
     default_inventory = generate_rectangle_inventory(
         container_size=DEFAULT_CONTAINER_SIZE,
@@ -126,6 +144,7 @@ def build_demo() -> gr.Blocks:
         vertical_growth_percent=DEFAULT_VERTICAL_GROWTH,
     )
     default_table = _inventory_dataframe(default_inventory)
+    default_inventory_snapshot = _render_inventory_snapshot(default_inventory)
 
     with gr.Blocks(title="Упаковка прямоугольников") as demo:
         gr.Markdown(
@@ -137,20 +156,29 @@ def build_demo() -> gr.Blocks:
             """
         )
 
-        inventory_editor = gr.Dataframe(
-            headers=INVENTORY_COLUMNS,
-            value=default_table,
-            datatype=["number", "number", "number", "number"],
-            row_count=(len(default_table), "dynamic"),
-            col_count=(len(INVENTORY_COLUMNS), "fixed"),
-            label="Инвентарь прямоугольников",
-        )
+        with gr.Row(equal_height=True):
+            with gr.Column(scale=1, min_width=400):
+                inventory_editor = gr.Dataframe(
+                    headers=INVENTORY_COLUMNS,
+                    value=default_table,
+                    datatype=["number", "number", "number", "number"],
+                    row_count=(len(default_table), "dynamic"),
+                    col_count=(len(INVENTORY_COLUMNS), "fixed"),
+                    label="Инвентарь прямоугольников",
+                )
+            with gr.Column(scale=1, min_width=400):
+                inventory_preview = gr.Image(
+                    value=default_inventory_snapshot,
+                    label="Визуализация инвентаря",
+                    type="filepath",
+                )
 
         pack_button = gr.Button("упаковать")
         status = gr.Textbox(label="Результат", interactive=False)
         result_image = gr.Image(label="Визуализация", type="filepath")
 
         pack_button.click(_on_pack, inputs=inventory_editor, outputs=[status, result_image])
+        inventory_editor.change(_on_inventory_change, inputs=inventory_editor, outputs=inventory_preview)
     return demo
 
 
