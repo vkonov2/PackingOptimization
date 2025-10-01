@@ -283,6 +283,8 @@ def visualize_solution(
     container_size: Tuple[float, float],
     rectangles: List[SmallRectangle],
     positions: Dict[str, Tuple[float, float]],
+    total_weight: float,
+    total_inventory_weight: float,
     output_path: str = "rectangular_solution.png",
 ) -> None:
     used_rectangles = {name for name in positions}
@@ -296,7 +298,11 @@ def visualize_solution(
     _draw_inventory_panel(ax_inventory, rectangles, used_rectangles)
     _draw_layout_panel(ax_layout, container_size, rectangles, positions)
 
-    plt.tight_layout()
+    fig.suptitle(
+        "Суммарный вес: {:.1f} из {:.1f}".format(total_weight, total_inventory_weight),
+        fontsize=14,
+    )
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
     plt.savefig(output_path, dpi=200)
     plt.close(fig)
 
@@ -412,7 +418,7 @@ def _draw_inventory_panel(
         label_y = origin_y + label_band / 2
         label_lines = [
             f"{_format_dimension(rect.height)}×{_format_dimension(rect.width)}",
-            f"w={rect.weight:.1f} • использовано {used_count}/{total_count}",
+            f"w={rect.weight:.1f} • {used_count}/{total_count}",
         ]
         ax.text(
             label_x,
@@ -516,7 +522,15 @@ def main() -> None:
 
     report_overlap_statistics(rectangles, positions)
 
-    visualize_solution(container_size, rectangles, positions)
+    total_inventory_weight = sum(rect.weight for rect in rectangles)
+
+    visualize_solution(
+        container_size,
+        rectangles,
+        positions,
+        total_weight,
+        total_inventory_weight,
+    )
     print("Визуализация сохранена в rectangular_solution.png")
 
 
