@@ -61,9 +61,6 @@ class WeightedPackingModel:
 
         self.model = cp_model.CpModel()
         self.overlap_indicators: List[cp_model.BoolVar] = []
-        self._incident_overlaps: List[List[cp_model.BoolVar]] = [
-            [] for _ in self.rectangles
-        ]
         self._build_variables()
         self._add_overlap_constraints()
         self._set_objective()
@@ -257,23 +254,6 @@ class WeightedPackingModel:
                 self.model.AddImplication(both_overlap, both_exceed.Not())
 
                 self.overlap_indicators.append(both_overlap)
-                self._incident_overlaps[i].append(both_overlap)
-                self._incident_overlaps[j].append(both_overlap)
-
-        for idx, overlaps in enumerate(self._incident_overlaps):
-            if not overlaps:
-                # The rectangle has no peers to overlap with (for example when
-                # it is the only item in the instance).  Skip the constraint so
-                # the instance can still remain feasible by simply placing the
-                # solitary rectangle.
-                continue
-
-            # Require every selected rectangle to participate in at least one
-            # overlap so that solver solutions always contain visible
-            # intersections in the final report.  This guards against the
-            # degenerate layouts observed previously where the optimizer
-            # achieved the target weight using only disjoint placements.
-            self.model.Add(sum(overlaps) >= self.use_rect[idx])
 
     def _set_objective(self) -> None:
         objective_terms = [
