@@ -88,7 +88,19 @@ def _render_inventory_snapshot(rectangles: Sequence[SmallRectangle]) -> str | No
     return temp_file.name
 
 
-def _solve_and_render(table: pd.DataFrame) -> Tuple[str, str]:
+def _solve_and_render(
+    table: pd.DataFrame, container_width: float, container_height: float
+) -> Tuple[str, str]:
+    try:
+        width = float(container_width)
+        height = float(container_height)
+    except (TypeError, ValueError):
+        return "Некорректные размеры контейнера.", gr.update(value=None)
+
+    if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
+        return "Размеры контейнера должны быть положительными числами.", gr.update(value=None)
+
+    container_size = (width, height)
     rectangles = _expand_inventory(table)
     if not rectangles:
         return "Не удалось построить инвентарь. Проверьте введенные размеры.", gr.update(value=None)
@@ -96,7 +108,7 @@ def _solve_and_render(table: pd.DataFrame) -> Tuple[str, str]:
     total_inventory_weight = sum(rect.weight for rect in rectangles)
 
     try:
-        model = WeightedPackingModel(container_size=DEFAULT_CONTAINER_SIZE, rectangles=rectangles)
+        model = WeightedPackingModel(container_size=container_size, rectangles=rectangles)
         total_weight, positions = model.solve()
     except Exception as exc:  # noqa: BLE001 - surface error message in UI
         return f"Ошибка при расчете: {exc}", gr.update(value=None)
@@ -105,7 +117,7 @@ def _solve_and_render(table: pd.DataFrame) -> Tuple[str, str]:
     temp_file.close()
 
     visualize_solution(
-        DEFAULT_CONTAINER_SIZE,
+        container_size,
         rectangles,
         positions,
         total_weight,
@@ -119,12 +131,16 @@ def _solve_and_render(table: pd.DataFrame) -> Tuple[str, str]:
         f"Суммарный вес: {total_weight:.2f} из {total_inventory_weight:.2f}",
     ]
 
+    summary_lines.append(f"Размер контейнера: {width:.2f} × {height:.2f}")
+
     return "\n".join(summary_lines), temp_file.name
 
 
-def _on_pack(table: Iterable[Iterable[float]]) -> Tuple[str, str]:
+def _on_pack(
+    table: Iterable[Iterable[float]], container_width: float, container_height: float
+) -> Tuple[str, str]:
     dataframe = _coerce_table(table)
-    return _solve_and_render(dataframe)
+    return _solve_and_render(dataframe, container_width, container_height)
 
 
 def _on_inventory_change(table: Iterable[Iterable[float]]):
@@ -152,7 +168,8 @@ def build_demo() -> gr.Blocks:
             # Упаковка прямоугольников
             Настройте инвентарь прямоугольников в таблице ниже. Вы можете менять размеры, вес и количество типов
             прямоугольников, добавлять новые строки или деактивировать тип, установив его количество в ноль.
-            После настройки нажмите кнопку **«упаковать»**, чтобы запустить расчет и увидеть полученную раскладку.
+            Ниже таблицы можно задать размеры контейнера. После настройки нажмите кнопку **«упаковать»**, чтобы
+            запустить расчет и увидеть полученную раскладку.
             """
         )
 
@@ -173,11 +190,27 @@ def build_demo() -> gr.Blocks:
                     type="filepath",
                 )
 
+        with gr.Row():
+            container_width_input = gr.Number(
+                value=DEFAULT_CONTAINER_SIZE[0],
+                label="Ширина контейнера",
+                minimum=0.01,
+            )
+            container_height_input = gr.Number(
+                value=DEFAULT_CONTAINER_SIZE[1],
+                label="Высота контейнера",
+                minimum=0.01,
+            )
+
         pack_button = gr.Button("упаковать")
         status = gr.Textbox(label="Результат", interactive=False)
         result_image = gr.Image(label="Визуализация", type="filepath")
 
-        pack_button.click(_on_pack, inputs=inventory_editor, outputs=[status, result_image])
+        pack_button.click(
+            _on_pack,
+            inputs=[inventory_editor, container_width_input, container_height_input],
+            outputs=[status, result_image],
+        )
         inventory_editor.change(_on_inventory_change, inputs=inventory_editor, outputs=inventory_preview)
     return demo
 
