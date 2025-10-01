@@ -127,7 +127,7 @@ def _on_pack(table: Iterable[Iterable[float]]) -> Tuple[str, str]:
     return _solve_and_render(dataframe)
 
 
-def _on_inventory_change(table: Iterable[Iterable[float]]) -> gr.Update:
+def _on_inventory_change(table: Iterable[Iterable[float]]):
     dataframe = _coerce_table(table)
     rectangles = _expand_inventory(dataframe)
     snapshot = _render_inventory_snapshot(rectangles)
