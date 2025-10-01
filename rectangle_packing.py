@@ -1,7 +1,7 @@
 import math
 from dataclasses import dataclass
 from itertools import combinations
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Sequence, Set, Tuple
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
@@ -11,22 +11,120 @@ from ortools.sat.python import cp_model
 @dataclass(frozen=True)
 class SmallRectangle:
     name: str
-    width: int
-    height: int
+    width: float
+    height: float
     weight: float
 
     @property
-    def area(self) -> int:
+    def area(self) -> float:
         return self.width * self.height
+
+
+def _build_dimension_series(
+    base_size: float, growth_percent: float, limit: float
+) -> Sequence[Tuple[float, int]]:
+    if base_size <= 0:
+        raise ValueError("Base size must be positive")
+    if not (0 <= growth_percent < 1):
+        raise ValueError("Growth percent must be between 0 (inclusive) and 1 (exclusive)")
+
+    increment = base_size * (1 - growth_percent)
+    if increment <= 0:
+        raise ValueError("Increment must be positive; adjust the growth percent")
+
+    sizes: List[Tuple[float, int]] = []
+    step = 0
+    eps = 1e-9
+    while True:
+        size = base_size + step * increment
+        if size > limit + eps:
+            break
+        sizes.append((round(size, 6), step))
+        step += 1
+    return sizes
+
+
+def _append_rectangles(
+    rectangles: List[SmallRectangle],
+    name_prefix: str,
+    count: int,
+    width: float,
+    height: float,
+    weight: float,
+) -> None:
+    for copy_idx in range(count):
+        rectangles.append(
+            SmallRectangle(
+                name=f"{name_prefix}_{copy_idx + 1:02d}",
+                width=width,
+                height=height,
+                weight=weight,
+            )
+        )
+
+
+def generate_rectangle_inventory(
+    container_size: Tuple[float, float],
+    base_width: float,
+    base_height: float,
+    base_weight: float,
+    horizontal_growth_percent: float,
+    vertical_growth_percent: float,
+) -> List[SmallRectangle]:
+    container_width, container_height = container_size
+    if container_width <= 0 or container_height <= 0:
+        raise ValueError("Container dimensions must be positive")
+
+    container_area = container_width * container_height
+    max_dimension = max(container_width, container_height)
+
+    width_series = _build_dimension_series(base_width, horizontal_growth_percent, max_dimension)
+    height_series = _build_dimension_series(base_height, vertical_growth_percent, max_dimension)
+
+    rectangles: List[SmallRectangle] = []
+    type_index = 1
+    eps = 1e-9
+
+    for width_value, width_step in width_series:
+        width_weight = base_weight + width_step
+        for height_value, height_step in height_series:
+            height_weight = base_weight + height_step
+            weight = width_weight + height_weight - base_weight
+
+            base_orientation_fits = (
+                width_value <= container_width + eps
+                and height_value <= container_height + eps
+            )
+            rotated_orientation_fits = (
+                height_value <= container_width + eps
+                and width_value <= container_height + eps
+            )
+
+            orientation_variants: List[Tuple[float, float, str]] = []
+            if base_orientation_fits:
+                orientation_variants.append((width_value, height_value, ""))
+            if rotated_orientation_fits and not math.isclose(width_value, height_value):
+                orientation_variants.append((height_value, width_value, "R"))
+
+            for width, height, suffix in orientation_variants:
+                area = width * height
+                if area <= 0:
+                    continue
+                count = math.floor(container_area / area) + 1
+                name_prefix = f"R{type_index:02d}{suffix}"
+                _append_rectangles(rectangles, name_prefix, count, width, height, weight)
+                type_index += 1
+
+    return rectangles
 
 
 class WeightedPackingModel:
     def __init__(
         self,
-        container_size: Tuple[int, int],
+        container_size: Tuple[float, float],
         rectangles: List[SmallRectangle],
         grid_step: int = 1,
-        coordinate_scale: int = 10,
+        coordinate_scale: int = 100,
     ) -> None:
         if grid_step <= 0:
             raise ValueError("grid_step must be positive")
@@ -40,7 +138,10 @@ class WeightedPackingModel:
         self.grid_step = grid_step
 
         self.scaled_dimensions: List[Tuple[int, int]] = [
-            (int(rect.width * self.scale), int(rect.height * self.scale))
+            (
+                int(round(rect.width * self.scale)),
+                int(round(rect.height * self.scale)),
+            )
             for rect in self.rectangles
         ]
         self.max_scaled_width = max((w for w, _ in self.scaled_dimensions), default=0)
@@ -171,7 +272,7 @@ class WeightedPackingModel:
 
 
 def visualize_solution(
-    container_size: Tuple[int, int],
+    container_size: Tuple[float, float],
     rectangles: List[SmallRectangle],
     positions: Dict[str, Tuple[float, float]],
     output_path: str = "rectangular_solution.png",
@@ -283,7 +384,11 @@ def _draw_inventory_panel(
         ax.text(
             rect_x + scaled_w / 2,
             label_y,
-            f"{rect.name}\n{rect.width}×{rect.height}\n{rect.weight}",
+            (
+                f"{rect.name}\n"
+                f"{_format_dimension(rect.width)}×{_format_dimension(rect.height)}\n"
+                f"w={rect.weight:.1f}"
+            ),
             ha="center",
             va="center",
             fontsize=8,
@@ -292,7 +397,7 @@ def _draw_inventory_panel(
 
 def _draw_layout_panel(
     ax: plt.Axes,
-    container_size: Tuple[int, int],
+    container_size: Tuple[float, float],
     rectangles: List[SmallRectangle],
     positions: Dict[str, Tuple[float, float]],
 ) -> None:
@@ -333,43 +438,33 @@ def _draw_layout_panel(
     ax.set_aspect("equal")
 
 
-def _format_coord(value: float) -> str:
-    rounded = round(value + 1e-9, 1)
+def _format_dimension(value: float) -> str:
+    rounded = round(value + 1e-9, 2)
     if math.isclose(rounded, round(rounded)):
         return str(int(round(rounded)))
-    return f"{rounded:.1f}"
+    return f"{rounded:.2f}"
+
+
+def _format_coord(value: float) -> str:
+    rounded = round(value + 1e-9, 2)
+    if math.isclose(rounded, round(rounded)):
+        return str(int(round(rounded)))
+    return f"{rounded:.2f}"
 
 
 def main() -> None:
-    # The container is intentionally smaller in area than the total supply of
-    # small rectangles so that the optimizer must choose a profitable subset.
-    container_size = (10, 5.8)
+    container_size = (10.0, 5.8)
 
-    rectangles: List[SmallRectangle] = []
-    for idx in range(10):
-        rectangles.append(
-            SmallRectangle(
-                name=f"L{idx + 1:02d}",
-                width=2,
-                height=3,
-                weight=6.0,
-            )
-        )
-    for idx in range(20):
-        rectangles.append(
-            SmallRectangle(
-                name=f"S{idx + 1:02d}",
-                width=1,
-                height=2,
-                weight=3.0,
-            )
-        )
-
-    model = WeightedPackingModel(
+    rectangles = generate_rectangle_inventory(
         container_size=container_size,
-        rectangles=rectangles,
-        grid_step=1,
+        base_width=2.0,
+        base_height=3.0,
+        base_weight=1.0,
+        horizontal_growth_percent=0.10,
+        vertical_growth_percent=0.05,
     )
+
+    model = WeightedPackingModel(container_size=container_size, rectangles=rectangles)
     total_weight, positions = model.solve()
 
     used_rectangles = [rect for rect in rectangles if rect.name in positions]
