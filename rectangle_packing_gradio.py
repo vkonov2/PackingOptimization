@@ -8,7 +8,6 @@ from typing import Dict, Iterable, List, Sequence, Tuple
 
 import gradio as gr
 import pandas as pd
-from gradio.events import SelectData
 
 from rectangle_packing import (
     SmallRectangle,
@@ -23,10 +22,7 @@ DEFAULT_BASE_HEIGHT = 3.0
 DEFAULT_BASE_WEIGHT = 1.0
 DEFAULT_HORIZONTAL_GROWTH = 0.10
 DEFAULT_VERTICAL_GROWTH = 0.05
-DELETE_COLUMN = "delete"
-DELETE_SYMBOL = "🗑️"
-BASE_COLUMNS = ["width", "height", "weight", "count"]
-INVENTORY_COLUMNS = BASE_COLUMNS + [DELETE_COLUMN]
+INVENTORY_COLUMNS = ["width", "height", "weight", "count"]
 
 
 def _inventory_dataframe(rectangles: Sequence[SmallRectangle]) -> pd.DataFrame:
@@ -46,9 +42,7 @@ def _inventory_dataframe(rectangles: Sequence[SmallRectangle]) -> pd.DataFrame:
         )
 
     rows.sort(key=lambda row: (row["height"], row["width"], row["weight"]))
-    dataframe = pd.DataFrame(rows, columns=BASE_COLUMNS)
-    dataframe[DELETE_COLUMN] = DELETE_SYMBOL
-    return dataframe[INVENTORY_COLUMNS]
+    return pd.DataFrame(rows, columns=INVENTORY_COLUMNS)
 
 
 def _coerce_table(table: Iterable[Iterable[float]] | None) -> pd.DataFrame:
@@ -56,15 +50,13 @@ def _coerce_table(table: Iterable[Iterable[float]] | None) -> pd.DataFrame:
         dataframe = pd.DataFrame(columns=INVENTORY_COLUMNS)
     else:
         dataframe = pd.DataFrame(table, columns=INVENTORY_COLUMNS)
-
-    dataframe[DELETE_COLUMN] = DELETE_SYMBOL
     return dataframe[INVENTORY_COLUMNS]
 
 
 def _expand_inventory(table: pd.DataFrame) -> List[SmallRectangle]:
     rectangles: List[SmallRectangle] = []
     working_table = _coerce_table(table)
-    for idx, row in working_table[BASE_COLUMNS].iterrows():
+    for idx, row in working_table[INVENTORY_COLUMNS].iterrows():
         width = float(row["width"])
         height = float(row["height"])
         weight = float(row["weight"])
@@ -124,27 +116,6 @@ def _on_pack(table: Iterable[Iterable[float]]) -> Tuple[str, str]:
     return _solve_and_render(dataframe)
 
 
-def _handle_delete(table: Iterable[Iterable[float]] | None, event: SelectData | None) -> pd.DataFrame:
-    dataframe = _coerce_table(table)
-    if event is None:
-        return dataframe
-
-    row_idx, col_idx = event.index
-    if col_idx != INVENTORY_COLUMNS.index(DELETE_COLUMN):
-        return dataframe
-
-    if 0 <= row_idx < len(dataframe):
-        dataframe = dataframe.drop(index=row_idx).reset_index(drop=True)
-    dataframe[DELETE_COLUMN] = DELETE_SYMBOL
-    return dataframe
-
-
-def _refresh_delete_column(table: Iterable[Iterable[float]] | None) -> pd.DataFrame:
-    dataframe = _coerce_table(table)
-    dataframe[DELETE_COLUMN] = DELETE_SYMBOL
-    return dataframe
-
-
 def build_demo() -> gr.Blocks:
     default_inventory = generate_rectangle_inventory(
         container_size=DEFAULT_CONTAINER_SIZE,
@@ -161,7 +132,7 @@ def build_demo() -> gr.Blocks:
             """
             # Упаковка прямоугольников
             Настройте инвентарь прямоугольников в таблице ниже. Вы можете менять размеры, вес и количество типов
-            прямоугольников, добавлять новые строки или удалять существующие (щелчок по значку 🗑️ удаляет строку).
+            прямоугольников, добавлять новые строки или деактивировать тип, установив его количество в ноль.
             После настройки нажмите кнопку **«упаковать»**, чтобы запустить расчет и увидеть полученную раскладку.
             """
         )
@@ -169,7 +140,7 @@ def build_demo() -> gr.Blocks:
         inventory_editor = gr.Dataframe(
             headers=INVENTORY_COLUMNS,
             value=default_table,
-            datatype=["number", "number", "number", "number", "str"],
+            datatype=["number", "number", "number", "number"],
             row_count=(len(default_table), "dynamic"),
             col_count=(len(INVENTORY_COLUMNS), "fixed"),
             label="Инвентарь прямоугольников",
@@ -180,17 +151,6 @@ def build_demo() -> gr.Blocks:
         result_image = gr.Image(label="Визуализация", type="filepath")
 
         pack_button.click(_on_pack, inputs=inventory_editor, outputs=[status, result_image])
-        inventory_editor.select(
-            _handle_delete,
-            inputs=inventory_editor,
-            outputs=inventory_editor,
-        )
-        inventory_editor.change(
-            _refresh_delete_column,
-            inputs=inventory_editor,
-            outputs=inventory_editor,
-        )
-
     return demo
 
 

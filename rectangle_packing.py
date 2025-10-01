@@ -465,7 +465,11 @@ def _draw_layout_panel(
         ax.text(
             x + rect.width / 2,
             y + rect.height / 2,
-            f"{rect.name}\n{rect.weight}",
+            "{}×{}\nw={:.1f}".format(
+                _format_dimension(rect.height),
+                _format_dimension(rect.width),
+                rect.weight,
+            ),
             ha="center",
             va="center",
             fontsize=8,
